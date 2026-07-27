@@ -9,11 +9,42 @@ from backend.core.config import get_settings
 from backend.core.workflow_engine import get_workflow_engine
 from backend.database.repository import save_review_result
 from backend.database.session import get_sessionmaker
+from backend.integrations.diff_parser import get_valid_line_range
 from backend.integrations.github_client import GitHubClient
 from backend.models.enums import ReviewOutcome
+from backend.models.findings import Finding
 from backend.models.review import DiffFile, ReviewRequest, ReviewResult
 
 logger = logging.getLogger(__name__)
+
+
+def _clamp_findings_to_diff(findings: list[Finding], files: list[DiffFile]) -> list[Finding]:
+    """Clamp each finding's line range into what the diff actually contains.
+
+    LLMs — especially small local ones — occasionally return a line just past
+    the end of a short file. GitHub's review API 422s on an out-of-diff line,
+    which would otherwise sink the whole review over one slightly-off finding.
+    """
+    patch_by_path = {f.path: f.patch for f in files}
+    clamped = []
+    for finding in findings:
+        patch = patch_by_path.get(finding.file_path)
+        valid_range = get_valid_line_range(patch) if patch else None
+        if valid_range is None:
+            clamped.append(finding)
+            continue
+        lo, hi = valid_range
+        new_start = min(max(finding.line_start, lo), hi)
+        new_end = min(max(finding.line_end, lo), hi)
+        if new_end < new_start:
+            new_start = new_end
+        if (new_start, new_end) != (finding.line_start, finding.line_end):
+            logger.warning(
+                "clamped finding line range for %s from (%s,%s) to (%s,%s) — outside diff bounds (%s,%s)",
+                finding.file_path, finding.line_start, finding.line_end, new_start, new_end, lo, hi,
+            )
+        clamped.append(finding.model_copy(update={"line_start": new_start, "line_end": new_end}))
+    return clamped
 
 
 def _redis_settings() -> RedisSettings:
@@ -71,7 +102,7 @@ async def run_review_job(
 
     result = ReviewResult(
         review_id=request.review_id,
-        findings=final_state["findings"],
+        findings=_clamp_findings_to_diff(final_state["findings"], request.files),
         overall_confidence=final_state["overall_confidence"],
         outcome=final_state["outcome"],
     )

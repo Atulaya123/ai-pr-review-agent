@@ -44,6 +44,35 @@ class OpenAILLMClient(LLMClient):
         )
 
 
+class OllamaLLMClient(LLMClient):
+    """Real local inference, zero cost, no API key — Ollama exposes an
+    OpenAI-compatible endpoint, so this reuses the OpenAI SDK pointed at
+    localhost instead of api.openai.com. Requires `ollama serve` running and
+    the model already pulled (`ollama pull llama3.2:3b`)."""
+
+    def __init__(self, base_url: str = "http://localhost:11434/v1"):
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(base_url=base_url, api_key="ollama")
+
+    async def complete_json(self, *, system: str, user: str, model: str) -> LLMResponse:
+        resp = await self._client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+        )
+        usage = resp.usage
+        tokens_in = usage.prompt_tokens if usage else 0
+        tokens_out = usage.completion_tokens if usage else 0
+        return LLMResponse(
+            text=resp.choices[0].message.content or "{}",
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=0.0,  # local inference, no per-token billing
+            model=model,
+        )
+
+
 class AnthropicLLMClient(LLMClient):
     def __init__(self, api_key: str):
         from anthropic import AsyncAnthropic
@@ -122,4 +151,6 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
         return OpenAILLMClient(settings.openai_api_key)
     if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
         return AnthropicLLMClient(settings.anthropic_api_key)
+    if settings.llm_provider == "ollama":
+        return OllamaLLMClient()
     return MockLLMClient()

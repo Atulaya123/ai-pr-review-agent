@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS repo_file_index (
 );
 
 -- ── Lane 2: Time — upgrade agent_events (created by scripts/init_db.py) to a hypertable ──
+-- TimescaleDB requires any unique constraint on a hypertable to include the
+-- partitioning column. agent_events.id is a plain single-column UUID PK from
+-- the M1 SQLAlchemy model (fine for a non-hypertable), so it must be dropped
+-- before conversion — this is an append-only events table, not referenced by
+-- any foreign key, so id no longer needs a uniqueness guarantee.
+ALTER TABLE agent_events DROP CONSTRAINT IF EXISTS agent_events_pkey;
+
 -- Only run this the first time; create_hypertable errors if already converted.
 SELECT create_hypertable('agent_events', by_range('ts', INTERVAL '1 day'), if_not_exists => TRUE, migrate_data => TRUE);
 
