@@ -17,7 +17,7 @@ from backend.tools.llm_client import LLMClient
 _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "ollama": "llama3.2:3b",
+    "ollama": "qwen2.5:7b-instruct",
     "mock": "mock",
 }
 
