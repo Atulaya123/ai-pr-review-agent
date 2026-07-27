@@ -15,11 +15,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6480/0"
 
     # llm
-    llm_provider: str = "mock"  # "openai" | "anthropic" | "mock"
+    llm_provider: str = "mock"  # "openai" | "anthropic" | "ollama" | "mock"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
-    embedding_model: str = "text-embedding-3-large"
-    embedding_dims: int = 256
+    # default matches the free local path (Ollama + nomic-embed-text, 768 dims).
+    # Swap to "text-embedding-3-large" (256 dims, per the architecture doc) if
+    # running on OpenAI — code_chunks.embedding's column width must match.
+    embedding_model: str = "nomic-embed-text"
+    embedding_dims: int = 768
+    embedding_provider: str = "ollama"  # "ollama" | "openai"
 
     # github app
     github_app_id: str | None = None
