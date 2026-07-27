@@ -9,7 +9,7 @@ from backend.observability.events import emit_agent_event
 from backend.prompts.registry import get_system_prompt
 from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
-from backend.reliability.timeout import with_timeout
+from backend.reliability.timeout import LLM_TIMEOUT_S, with_timeout
 from backend.security.injection_guard import detect_injection_attempt, fence_untrusted_content
 from backend.core.config import get_settings
 from backend.tools.llm_client import LLMClient
@@ -57,7 +57,10 @@ class SpecialistAgent:
             pass  # surfaced as part of its own findings via the LLM's judgment
 
         async def _call():
-            return await with_timeout(self.llm_client.complete_json(system=system, user=user, model=self.model))
+            return await with_timeout(
+                self.llm_client.complete_json(system=system, user=user, model=self.model),
+                timeout_s=LLM_TIMEOUT_S,
+            )
 
         response = await _breaker.call(lambda: retry_with_backoff(_call, max_attempts=3))
 
