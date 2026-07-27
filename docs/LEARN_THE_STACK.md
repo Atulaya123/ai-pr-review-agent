@@ -292,6 +292,12 @@ cost — I tried a 3B model first, which hallucinated more, and moved up to 14B,
 reliably produced correct, precisely-cited findings once the prompts explicitly instructed
 it to cross-check retrieved context."
 
+**Why local Ollama alone can't just be "deployed" as-is:** it needs the model's full weights
+loaded into RAM (several GB for a 14B model), which free-tier cloud hosting doesn't provide.
+The code also supports Groq (`backend/tools/llm_client.py`'s `GroqLLMClient`) — a free *hosted*
+API that's a drop-in swap behind the same `LLMClient` interface, evaluated as the path to an
+always-on deployment without paying for compute, though not put into live use.
+
 ---
 
 ## 11. Making the system fail safely — timeouts, retries, circuit breakers
