@@ -1,0 +1,16 @@
+{
+  "$comment": "nodes=modules, edges=[cause,effect] where cause is imported-by effect. ADD invariants by hand.",
+  "project": ".",
+  "generated": "2026-07-27T11:41:08.039Z",
+  "nodes": [],
+  "edges": [],
+  "invariants": {
+    "modular_monolith_dependency_direction": "core/ depends on nothing; outer modules (agents, api, orchestrator, memory, integrations) depend inward only, never on each other directly except through core/workflow_engine.py or models/. observability is cross-cutting middleware, not a dependency of domain logic. (ADR-002)",
+    "outbound_calls_have_timeouts": "every LLM call, GitHub API call, and Tiger/Postgres query goes through reliability/timeout.py + reliability/retry.py + reliability/circuit_breaker.py — no raw httpx/asyncpg/openai client call without a bound timeout.",
+    "untrusted_diff_content_never_executed": "PR diff/code content is data, not instructions — it is only ever passed to LLMs as a clearly-delimited untrusted context block (security/injection_guard.py) and is never eval'd, shelled out, or used to construct SQL/paths without parameterization/sanitization."
+  },
+  "freeze_boundary": [
+    "backend/core/**",
+    "backend/models/**"
+  ]
+}
