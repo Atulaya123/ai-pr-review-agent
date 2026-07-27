@@ -11,11 +11,13 @@ from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
 from backend.reliability.timeout import with_timeout
 from backend.security.injection_guard import detect_injection_attempt, fence_untrusted_content
+from backend.core.config import get_settings
 from backend.tools.llm_client import LLMClient
 
 _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
+    "ollama": "llama3.2:3b",
     "mock": "mock",
 }
 
@@ -33,7 +35,7 @@ class SpecialistAgent:
     def __init__(self, agent_type: AgentType, llm_client: LLMClient, model: str | None = None):
         self.agent_type = agent_type
         self.llm_client = llm_client
-        self.model = model or _LLM_MODEL_BY_PROVIDER.get("mock")
+        self.model = model or _LLM_MODEL_BY_PROVIDER.get(get_settings().llm_provider, "mock")
 
     def _build_user_prompt(self, request: ReviewRequest, retrieved_context: str) -> str:
         diff_text = "\n".join(f"--- {f.path} ---\n{f.patch}" for f in request.files)

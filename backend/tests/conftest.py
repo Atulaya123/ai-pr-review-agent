@@ -9,6 +9,13 @@ os.environ.setdefault(
     "postgresql+asyncpg://postgres:postgres@localhost:5544/aipr_review_test",
 )
 
+# Settings.env_file=".env" means a developer's real .env (pointed at live Tiger
+# Cloud / openai / anthropic / ollama) would otherwise leak into test runs.
+# OS env vars take precedence over the .env file in pydantic-settings, so this
+# pins the test suite back to the deterministic mock client regardless of what
+# LLM_PROVIDER a local .env happens to be set to.
+os.environ.setdefault("LLM_PROVIDER", "mock")
+
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
