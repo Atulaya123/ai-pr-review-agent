@@ -54,8 +54,10 @@
         <tr><td>ARQ worker driving full pipeline</td><td><code>backend/job_queue/arq_worker.py</code></td><td><span class="pill live">live</span></td><td>ran worker against a real enqueued job, confirmed persisted + readable via API</td></tr>
         <tr><td>Postgres persistence (truth lane)</td><td><code>backend/database/models.py</code>, <code>repository.py</code></td><td><span class="pill live">live</span></td><td><code>pytest</code> + live curl to <code>/api/reviews/&lt;id&gt;</code></td></tr>
         <tr><td>Prompt-injection guard</td><td><code>backend/security/injection_guard.py</code></td><td><span class="pill live">live</span></td><td><code>pytest backend/tests/test_injection_guard.py</code></td></tr>
-        <tr><td>GitHub App client (JWT auth, post review)</td><td><code>backend/integrations/github_client.py</code></td><td><span class="pill wip">partial</span></td><td>code complete, no live GitHub App credentials to test against yet (M2)</td></tr>
-        <tr><td>RAG retrieval over code_chunks</td><td><code>backend/memory/context_retriever.py</code></td><td><span class="pill wip">partial</span></td><td>stub returns empty context; real Tiger Cloud query is M2</td></tr>
+        <tr><td>GitHub App client (JWT auth, post review) — LIVE end to end</td><td><code>backend/integrations/github_client.py</code></td><td><span class="pill live">live</span></td><td>real PR: <a href="https://github.com/Atulaya123/ai-pr-review-agent/pull/1">Atulaya123/ai-pr-review-agent#1</a> — bot posted a real CHANGES_REQUESTED review from real llama3.2:3b reasoning over a real diff</td></tr>
+        <tr><td>Ollama local LLM provider (zero cost)</td><td><code>backend/tools/llm_client.py::OllamaLLMClient</code></td><td><span class="pill live">live</span></td><td>same PR #1 — real inference, no API key/billing needed</td></tr>
+        <tr><td>Tiger Cloud (pgvector/pgvectorscale/TimescaleDB)</td><td><code>scripts/migrations/2026-06-tiger-init.sql</code></td><td><span class="pill live">live</span></td><td>extensions + <code>agent_events</code> hypertable confirmed via direct query against the provisioned service</td></tr>
+        <tr><td>RAG retrieval over code_chunks</td><td><code>backend/memory/context_retriever.py</code></td><td><span class="pill wip">partial</span></td><td>stub still returns empty context — code_chunks table exists in Tiger Cloud but isn't populated by an ingestion pipeline yet</td></tr>
         <tr><td>Redis-backed LangGraph checkpointing</td><td><code>backend/orchestrator/langgraph_engine.py</code></td><td><span class="pill wip">partial</span></td><td>using in-process MemorySaver for M1 — see Deviation log</td></tr>
       </tbody>
     </table>
@@ -83,6 +85,10 @@
         <tr><td>2026-07-27</td><td>M1</td><td>Redis-backed LangGraph checkpointer (per pr-review-agent.html 3.2)</td><td>In-process <code>MemorySaver</code></td><td>Zero extra infra for the M1 demo; a worker crash mid-review won't resume from checkpoint yet</td><td>None yet — swap point is <code>backend/orchestrator/langgraph_engine.py</code>, one file, per ADR-001's own "hide it behind a seam" principle</td></tr>
         <tr><td>2026-07-27</td><td>M1</td><td>docker-compose Postgres/Redis on standard 5432/6379</td><td>Remapped to 5544/6480</td><td>This dev machine already has a native Postgres and an SSH tunnel bound to 5432/6379/5433</td><td>None — <code>.env.example</code> and <code>core/config.py</code> defaults updated to match</td></tr>
         <tr><td>2026-07-27</td><td>M1</td><td>—</td><td>Added a dedicated <code>aipr_review_test</code> database for pytest, auto-created in conftest.py</td><td>The <code>db_session</code> fixture drops all tables on teardown — running tests against the dev DB would silently wipe demo data</td><td>None — caught during live verification, not by unit tests</td></tr>
+        <tr><td>2026-07-27</td><td>M2</td><td>OpenAI or Anthropic per the doc/PLAN.md</td><td>Added a third <code>OllamaLLMClient</code> provider (local llama3.2:3b, zero cost)</td><td>Neither OpenAI nor Anthropic account had billing/credit configured — Ollama was already running locally with no cost and no card needed</td><td>None — same <code>LLMClient</code> interface, selected via <code>LLM_PROVIDER=ollama</code></td></tr>
+        <tr><td>2026-07-27</td><td>M2</td><td>—</td><td>Clamp finding line ranges to the diff's actual hunk bounds before posting (<code>arq_worker._clamp_findings_to_diff</code>)</td><td>llama3.2:3b returned a line one past a 5-line file's end; GitHub's review API 422s on an out-of-diff line, which sank the whole review</td><td>None — a defensive fix in the reliability spirit of L8, covered by <code>test_arq_worker.py</code></td></tr>
+        <tr><td>2026-07-27</td><td>M2</td><td>psql for the Tiger Cloud migration</td><td>Ran the migration via a small asyncpg script instead</td><td>The Homebrew <code>psql</code> client (v14.20) hung indefinitely during SSL negotiation with the Tiger Cloud server; asyncpg (used everywhere else in the app) connected fine</td><td>None — <code>docs/SETUP.md</code>'s psql instructions may need the same substitution if a reader hits the same hang</td></tr>
+        <tr><td>2026-07-27</td><td>M2</td><td><code>create_hypertable</code> directly on <code>agent_events</code></td><td>Drop the table's single-column PK first, then convert</td><td>TimescaleDB requires any unique constraint on a hypertable to include the partitioning column (<code>ts</code>); the M1 SQLAlchemy model's plain UUID PK doesn't</td><td>None — <code>agent_events</code> is append-only telemetry, never referenced by FK</td></tr>
       </tbody>
     </table>
   </div>
@@ -91,11 +97,10 @@
   <h2>Known gaps &amp; the ordered Next list</h2>
   <div class="card">
     <ol>
-      <li>Get GitHub App, Tiger Cloud, and OpenAI/Anthropic credentials from the user (M2).</li>
-      <li>Run <code>scripts/migrations/2026-06-tiger-init.sql</code> against Tiger Cloud once provisioned.</li>
-      <li>Replace the stub in <code>backend/memory/context_retriever.py</code> with real hybrid DiskANN+FTS retrieval.</li>
-      <li>Test <code>backend/integrations/github_client.py</code> against a real installed GitHub App.</li>
-      <li>Run a separate-model L4 VERIFY pass on M1 before flipping its status pill to done in DONE.html/PLAN.md.</li>
+      <li>Replace the stub in <code>backend/memory/context_retriever.py</code> with real hybrid DiskANN+FTS retrieval — <code>code_chunks</code> table exists in Tiger Cloud but has no ingestion pipeline populating it yet.</li>
+      <li>Decide on a persistent deployment (Railway, per the doc) so the live demo doesn't depend on this laptop + a free ngrok tunnel staying up.</li>
+      <li>Run a separate-model L4 VERIFY pass on M1 (and now the M2 live-integration work) before flipping status pills to done in DONE.html/PLAN.md.</li>
+      <li>Rotate the Tiger Cloud DB password and the ngrok authtoken — both were incidentally exposed in this session's chat transcript while debugging (see deviation log); functionally fine, but cheap to rotate.</li>
       <li>M3: dashboard, economics/BudgetGuard, HITL queue UI. M4: reliability fault-injection tests, threat model doc, eval harness.</li>
     </ol>
     <p class="note">Mirror of <code>checkpoints/CURRENT.md → next_action</code>, but human-readable and durable across compaction.</p>
@@ -104,6 +109,23 @@
   <!-- ───────────── SESSION LOG (append-only) ───────────── -->
   <h2>Session log (append-only, newest first)</h2>
   <div class="card">
+    <p><code>2026-07-27 (2)</code> — Went fully live for M2: pushed the repo to
+       github.com/Atulaya123/ai-pr-review-agent, wired real credentials (GitHub App,
+       Tiger Cloud, and — after both OpenAI and Anthropic turned out to have no
+       billing configured — a new local Ollama provider, zero cost), ran the Tiger
+       Cloud migration (vector+timescale extensions, hypertable confirmed), and
+       drove an actual PR (#1) through the live webhook → LangGraph → GitHub-post
+       pipeline twice. First run 422'd; root-caused to a local model hallucinating
+       a line one past a short file's end, fixed with a diff-aware line-clamp
+       before posting. Second run succeeded for real: the bot posted a genuine
+       CHANGES_REQUESTED review with real findings from real local-LLM reasoning.
+       Also fixed a latent bug where the agent's model string was hardcoded to
+       "mock" regardless of provider (would have broken every real API call), and
+       pinned the test suite to LLM_PROVIDER=mock so a developer's live .env can't
+       leak into CI. Two secrets (a DB password, an ngrok authtoken) were
+       incidentally pasted into chat while debugging — noted for rotation, not
+       blocking. mypy clean, 20/20 tests green. Next: real RAG ingestion, and a
+       persistent deployment so the demo doesn't depend on this laptop staying on.</p>
     <p><code>2026-07-27</code> — Ran the full genesis ritual (G0-G6) against the existing
        pr-review-agent.html architecture doc, then built M1 end to end: FastAPI ingress with
        HMAC+idempotency, a real LangGraph 4-specialist fan-out (security/quality/tests/docs)
