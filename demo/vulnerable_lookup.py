@@ -3,3 +3,8 @@ def get_user(request):
     query = f"SELECT * FROM users WHERE id = {user_id}"
     result = db.execute(query)
     return result
+
+def another_endpoint(request):
+    name = request.args.get("name")
+    cmd = f"echo {name}"
+    return os.system(cmd)
