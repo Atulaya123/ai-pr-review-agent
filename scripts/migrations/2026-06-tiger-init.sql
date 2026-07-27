@@ -2,6 +2,11 @@
 -- Adds the memory lane (pgvectorscale/DiskANN) and upgrades agent_events to a
 -- real hypertable + continuous aggregates, per pr-review-agent.html Part II/2.3.
 -- Idempotent — safe to re-run.
+--
+-- Embedding width is 768 to match the free local path (Ollama + nomic-embed-text).
+-- The architecture doc specs OpenAI text-embedding-3-large truncated to 256 —
+-- if you switch EMBEDDING_PROVIDER=openai, change VECTOR(768) below to VECTOR(256)
+-- to match (a live table's column would need ALTER COLUMN ... TYPE, not just this file).
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS vectorscale;
@@ -15,7 +20,7 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     symbol       TEXT,
     chunk_index  INT          NOT NULL,
     content      TEXT         NOT NULL,
-    embedding    VECTOR(256)  NOT NULL,
+    embedding    VECTOR(768)  NOT NULL,
     token_count  INT,
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
