@@ -12,3 +12,5 @@ def summarize_order(items):
 
 def test_bulk_discount_applies_for_large_orders():
     assert apply_bulk_discount(10.0, 10) == 85.0
+
+# re-trigger with stronger model
