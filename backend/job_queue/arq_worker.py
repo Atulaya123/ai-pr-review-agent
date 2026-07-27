@@ -114,6 +114,11 @@ async def run_review_job(
         except Exception:
             logger.exception("failed to post review for %s#%s", repo, pr_number)
 
+    if result.outcome == ReviewOutcome.CRITICAL_BLOCK:
+        from backend.integrations.slack_alert import notify_critical
+
+        notify_critical(get_settings().slack_webhook_url, f"CRITICAL_BLOCK on {repo}#{pr_number}")
+
     async with get_sessionmaker()() as session:
         await save_review_result(session, repo, pr_number, head_sha, result)
 
