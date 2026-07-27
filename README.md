@@ -9,8 +9,10 @@ Built with the [genesis-kit](https://github.com/ayush488-glitch/genesis-kit) rit
 [`.genesis/`](.genesis/) for the cognitive design, invariants, and milestone plan this was
 built against.
 
-**Docs:** [`docs/SETUP.md`](docs/SETUP.md) (step-by-step credential setup for the live demo)
-· [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) (tech stack & design
+**Docs:** [`docs/LEARN_THE_STACK.md`](docs/LEARN_THE_STACK.md) (start here if any tool in this
+repo is unfamiliar — a from-zero primer on every technology used, in plain English) ·
+[`docs/SETUP.md`](docs/SETUP.md) (step-by-step credential setup for the live demo) ·
+[`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) (tech stack & design
 trade-offs, with what was given up) · [`docs/INTERVIEW_PREP.md`](docs/INTERVIEW_PREP.md)
 (Q&A defense of this project, including real bugs found while building it)
 
