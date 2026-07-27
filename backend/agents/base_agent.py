@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from uuid import UUID
 
@@ -17,9 +18,11 @@ from backend.tools.llm_client import LLMClient
 _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "ollama": "qwen2.5:7b-instruct",
+    "ollama": "qwen2.5:14b-instruct",
     "mock": "mock",
 }
+
+logger = logging.getLogger(__name__)
 
 # one breaker per process is enough for M1; M2 can key this per-provider if needed
 _breaker = CircuitBreaker()
@@ -83,6 +86,10 @@ class SpecialistAgent:
         try:
             data = json.loads(raw_text)
         except json.JSONDecodeError:
+            logger.warning(
+                "%s agent returned non-JSON response for review %s, treating as zero findings: %r",
+                self.agent_type.value, request.review_id, raw_text[:500],
+            )
             return []
 
         findings = []
@@ -102,6 +109,10 @@ class SpecialistAgent:
                         rationale=item["rationale"],
                     )
                 )
-            except (KeyError, ValueError):
+            except (KeyError, ValueError) as exc:
+                logger.warning(
+                    "%s agent produced a malformed finding for review %s, dropping it: %s — %r",
+                    self.agent_type.value, request.review_id, exc, item,
+                )
                 continue  # a malformed finding from the LLM should not sink the whole review
         return findings
