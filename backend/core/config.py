@@ -15,9 +15,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6480/0"
 
     # llm
-    llm_provider: str = "mock"  # "openai" | "anthropic" | "ollama" | "mock"
+    llm_provider: str = "mock"  # "openai" | "anthropic" | "ollama" | "groq" | "mock"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    # free hosted inference for the deployed instance — local Ollama can't run
+    # on free-tier hosting (not enough RAM for model weights).
+    groq_api_key: str | None = None
     # default matches the free local path (Ollama + nomic-embed-text, 768 dims).
     # Swap to "text-embedding-3-large" (256 dims, per the architecture doc) if
     # running on OpenAI — code_chunks.embedding's column width must match.

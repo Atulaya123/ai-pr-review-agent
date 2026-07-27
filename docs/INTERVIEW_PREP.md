@@ -78,6 +78,41 @@ current codebase means the grounding is always fresh, and swapping/upgrading the
 underlying model (the whole point of the provider-agnostic `LLMClient` abstraction)
 doesn't require retraining anything.
 
+**Q: How do you verify retrieval is actually *grounding* the model, not just
+decorating the prompt?** Two separate checks, because they can fail
+independently. First, I called the retrieval function directly with a known
+diff and printed what came back — confirmed the right chunks were fetched and
+ranked correctly by similarity, with zero LLM involved. Second, and separately,
+I checked whether the model's *actual answers* cited that content. The first
+one passed immediately; the second one didn't at first — the prompt only
+mentioned retrieved context in passing, so the model had the facts but wasn't
+instructed to actively cross-check the diff against them. Wiring the pipe and
+getting the model to use it turned out to be two different engineering
+problems, and conflating them would have hidden a real gap.
+
+**Q: Why did you need a bigger model instead of just better prompts?**
+I tried both independently. A 3B local model without a "check against these
+rules" instruction hallucinated (invented a nonexistent SQL injection in code
+with no SQL at all). A 7B model with the improved prompt got close — flagged
+the right function, gestured at the right area — but never named the actual
+rule. Only moving to 14B, with the same improved prompt, reliably produced the
+precise catch, citing the project's own invariant by name across three
+independent specialists. My conclusion: prompt engineering fixes instruction-
+following, but there's a reasoning-depth floor below which no amount of
+prompting reliably gets you a precise, correctly-attributed judgment call —
+you have to identify which failures are "the model isn't told what to do" vs.
+"the model isn't capable enough," because the fix is different for each.
+
+**Q: What would you say to "just use GPT-4/Claude for everything, why bother
+with local models"?** For a real production system, I'd agree — hosted
+frontier models would likely be faster and more consistent than a local 14B
+model, and I'd default to one if cost weren't a constraint. But the constraint
+was real (no budget for API credits for this project), and the exercise proved
+something worth knowing either way: the system's provider-agnostic `LLMClient`
+interface means swapping to a hosted model later is a one-line config change,
+not a redesign — the architecture was built assuming the model would need to
+change, which is exactly what happened during development.
+
 ---
 
 ## Data / database
@@ -128,6 +163,22 @@ change and a redeploy, not a rollback of application logic. Longer-term (M4), a
 golden-dataset regression gate in CI would catch a quality regression before it
 ships at all.
 
+**Q: What happens if a step after the "important" work fails — e.g., posting to
+GitHub succeeds but something afterward throws?** I hit this for real: a
+downstream Slack-notification call (no timeout, no error handling — a
+deliberately-planted flaw for a demo) threw an unhandled exception *after* the
+review had already posted to GitHub but *before* the result was saved to our
+own database. ARQ's automatic retry then re-ran the whole job, which happened
+to produce a different, non-crashing outcome on the retry — so the database
+ended up silently missing a review that GitHub definitely has. That's a real
+distributed-systems problem (a multi-step operation with side effects in two
+different systems has no atomicity between them) with a known fix I'd apply
+next: persist the review result immediately after posting, before attempting
+any secondary/best-effort side effect like a Slack ping, and wrap the
+secondary effect in a try/except so it literally cannot affect the primary
+outcome, matching the reliability-layer pattern the rest of the codebase
+already uses everywhere else.
+
 ---
 
 ## Trade-offs (the "why X not Y" gauntlet)
@@ -143,6 +194,21 @@ in `ARCHITECTURE_DECISIONS.md` if they want to go deeper on any one.
 | Queue | ARQ | Celery | Asyncio-native, no sync bridge | Celery's mature ecosystem |
 | GitHub auth | GitHub App | Personal Access Token | Scoped permissions, higher rate limits | Setup simplicity |
 | Confidence | min() | average | Doesn't let good findings mask a bad one | Slightly more conservative gate |
+
+**Q: Why isn't this deployed live somewhere, if it's ready?**
+Cost, deliberately. Free hosting tiers (Render, Fly, etc.) don't have the RAM
+to run the local 14B model that produced the strongest results — that model
+needs several GB just for its weights, far past what a free web-service
+container gives you. Making this a true always-on service would mean either
+paying for compute, or swapping the deployed instance to a different free
+*hosted* inference API (I evaluated Groq, which is OpenAI-API-compatible and
+has a free tier — the code already supports it as a third provider behind the
+same `LLMClient` interface) and a separate free embeddings API for retrieval
+(Groq doesn't serve embeddings). I chose not to spend further effort chasing
+a fully free always-on deployment once I had strong, reproducible live proof
+running locally — the marginal cost/complexity wasn't worth it for a portfolio
+project, though the path to do it is scoped and the code is already written to
+support the swap.
 
 ---
 
@@ -177,3 +243,37 @@ actually happened while building this:
    remapped to unused ports and updated every config in lockstep. *What this
    shows: methodical debugging under an ambiguous symptom ("role postgres does
    not exist" on a container that clearly had that role).*
+
+5. **A hallucinated finding at 100% self-reported confidence.** Testing the
+   RAG-grounded review, the docs specialist claimed a function "lacks a
+   docstring" — it has one, clearly, in the diff — and reported that claim at
+   confidence 1.00, the maximum. Meanwhile correct findings in the same review
+   sat at 0.85-0.95. This is the core argument for why the aggregator's
+   confidence gate uses the *minimum* across findings rather than trusting any
+   single score at face value: self-reported LLM confidence is generated text,
+   not a measured probability, and a wrong finding can carry higher confidence
+   than a correct one. *What this shows: understanding that LLM confidence
+   scores need independent verification, not blind trust, even when the number
+   looks reassuring.*
+
+6. **A downstream failure silently erased evidence of a successful primary
+   action.** Covered in detail in Reliability above — an unhandled exception in
+   a deliberately-flawed Slack notification crashed a job *after* GitHub had
+   already received a posted review, and the automatic retry masked it by
+   re-running until a different outcome avoided the crash. GitHub had a review;
+   the database didn't know about it. *What this shows: side effects across
+   multiple external systems need ordering and isolation, not just individual
+   error handling — retries can hide a consistency bug instead of just fixing
+   a transient one.*
+
+7. **A dimension mismatch and a unique-constraint collision, both in the same
+   migration.** Wiring real vector search: the schema was written for 256-dim
+   embeddings (matching OpenAI's model per the architecture doc), but the free
+   local embedding model produces 768-dim vectors — a straightforward `ALTER
+   COLUMN ... TYPE vector(768)` plus rebuilding the index fixed it. Separately,
+   an ingestion script inserting multiple chunks under the same file path
+   hit a unique constraint on `(repo, path, chunk_index)` because every row
+   was hardcoded to `chunk_index=0` — fixed by actually enumerating the loop.
+   *What this shows: schema assumptions written for one provider don't
+   silently carry over to another, and "should be unique" needs to actually be
+   computed, not assumed.*

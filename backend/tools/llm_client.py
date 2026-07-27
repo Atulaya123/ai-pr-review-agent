@@ -73,6 +73,35 @@ class OllamaLLMClient(LLMClient):
         )
 
 
+class GroqLLMClient(LLMClient):
+    """Free hosted inference for the deployed instance — Groq's API is
+    OpenAI-compatible, so this reuses the OpenAI SDK pointed at Groq instead
+    of api.openai.com. Used where local Ollama can't run (free-tier hosting
+    doesn't have the RAM for local model weights)."""
+
+    def __init__(self, api_key: str):
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
+
+    async def complete_json(self, *, system: str, user: str, model: str) -> LLMResponse:
+        resp = await self._client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+        )
+        usage = resp.usage
+        tokens_in = usage.prompt_tokens if usage else 0
+        tokens_out = usage.completion_tokens if usage else 0
+        return LLMResponse(
+            text=resp.choices[0].message.content or "{}",
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=0.0,  # free tier
+            model=model,
+        )
+
+
 class AnthropicLLMClient(LLMClient):
     def __init__(self, api_key: str):
         from anthropic import AsyncAnthropic
@@ -153,4 +182,6 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
         return AnthropicLLMClient(settings.anthropic_api_key)
     if settings.llm_provider == "ollama":
         return OllamaLLMClient()
+    if settings.llm_provider == "groq" and settings.groq_api_key:
+        return GroqLLMClient(settings.groq_api_key)
     return MockLLMClient()
