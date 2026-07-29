@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     webhook_max_body_bytes: int = 2_000_000
 
+    # alerting
+    slack_webhook_url: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
