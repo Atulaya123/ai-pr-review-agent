@@ -34,7 +34,13 @@ class GitHubClient:
         if self.settings.github_private_key:
             # env-var content — used on hosts with an ephemeral filesystem (e.g. Render),
             # where a file path written at build time wouldn't survive a redeploy.
-            private_key = self.settings.github_private_key.replace("\\n", "\n")
+            # Defensive normalization: dashboards commonly mangle multi-line paste —
+            # stripping real newlines down to literal "\n", adding surrounding quotes,
+            # or introducing \r\n. Undo all three rather than assume a clean paste.
+            private_key = self.settings.github_private_key.strip()
+            if len(private_key) >= 2 and private_key[0] == private_key[-1] and private_key[0] in "\"'":
+                private_key = private_key[1:-1]
+            private_key = private_key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
         elif self.settings.github_private_key_path:
             private_key = Path(self.settings.github_private_key_path).read_text()
         else:
