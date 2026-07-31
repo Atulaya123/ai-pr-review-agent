@@ -29,6 +29,12 @@ services:
         value: "0.75"
       - key: DAILY_BUDGET_USD
         value: "5.0"
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: aipr-review-agent
 
   - type: keyvalue
     name: aipr-review-queue
