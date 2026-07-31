@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     github_app_id: str | None = None
     github_webhook_secret: str | None = None
     github_private_key_path: str | None = None
+    # raw PEM content, for hosts with an ephemeral filesystem (e.g. Render) —
+    # takes precedence over github_private_key_path when set.
+    github_private_key: str | None = None
 
     # hitl gate
     hitl_confidence_threshold: float = 0.75
