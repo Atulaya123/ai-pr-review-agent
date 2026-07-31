@@ -3,3 +3,5 @@ def get_account_balance(request):
     query = f"SELECT balance FROM accounts WHERE id = {account_id}"
     result = db.execute(query)
     return result
+
+# retrigger after key fix
