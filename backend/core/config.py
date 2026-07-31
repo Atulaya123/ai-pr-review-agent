@@ -53,19 +53,34 @@ class Settings(BaseSettings):
     langsmith_project: str = "aipr-review-agent"
 
 
+def _langsmith_env_vars(settings: Settings) -> dict[str, str]:
+    """Pure computation, no side effects — kept separate from get_settings()
+    so tests can verify the mapping without ever actually flipping the real
+    LANGCHAIN_TRACING_V2 env var. Doing that for real, even with a fake key
+    and even briefly, was proven to leak: LangChain's tracing client buffers
+    and flushes on a background thread at process exit, independent of
+    whether the env var got cleaned up long before that point — a fake key
+    from a test can still produce a real (if harmless, 403) HTTP call to
+    api.smith.langchain.com after the test that set it has already finished.
+    """
+    if not (settings.langsmith_tracing and settings.langsmith_api_key):
+        return {}
+    env: dict[str, str] = {}
+    for prefix in ("LANGCHAIN", "LANGSMITH"):
+        env[f"{prefix}_TRACING_V2"] = "true"
+        env[f"{prefix}_TRACING"] = "true"
+        env[f"{prefix}_API_KEY"] = settings.langsmith_api_key
+        env[f"{prefix}_PROJECT"] = settings.langsmith_project
+    return env
+
+
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
     # LangGraph/LangChain's tracing client reads these from the real process
     # environment, not from this Settings object — pydantic-settings parses
     # .env internally without exporting it to os.environ, so this export is
-    # what actually turns tracing on. Set both var-name generations (LangChain
-    # renamed LANGCHAIN_* to LANGSMITH_* over time; older/newer SDK versions
-    # may read either).
-    if settings.langsmith_tracing and settings.langsmith_api_key:
-        for prefix in ("LANGCHAIN", "LANGSMITH"):
-            os.environ.setdefault(f"{prefix}_TRACING_V2", "true")
-            os.environ.setdefault(f"{prefix}_TRACING", "true")
-            os.environ.setdefault(f"{prefix}_API_KEY", settings.langsmith_api_key)
-            os.environ.setdefault(f"{prefix}_PROJECT", settings.langsmith_project)
+    # what actually turns tracing on.
+    for key, value in _langsmith_env_vars(settings).items():
+        os.environ.setdefault(key, value)
     return settings
