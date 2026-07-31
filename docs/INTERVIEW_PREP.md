@@ -195,20 +195,19 @@ in `ARCHITECTURE_DECISIONS.md` if they want to go deeper on any one.
 | GitHub auth | GitHub App | Personal Access Token | Scoped permissions, higher rate limits | Setup simplicity |
 | Confidence | min() | average | Doesn't let good findings mask a bad one | Slightly more conservative gate |
 
-**Q: Why isn't this deployed live somewhere, if it's ready?**
-Cost, deliberately. Free hosting tiers (Render, Fly, etc.) don't have the RAM
-to run the local 14B model that produced the strongest results — that model
-needs several GB just for its weights, far past what a free web-service
-container gives you. Making this a true always-on service would mean either
-paying for compute, or swapping the deployed instance to a different free
-*hosted* inference API (I evaluated Groq, which is OpenAI-API-compatible and
-has a free tier — the code already supports it as a third provider behind the
-same `LLMClient` interface) and a separate free embeddings API for retrieval
-(Groq doesn't serve embeddings). I chose not to spend further effort chasing
-a fully free always-on deployment once I had strong, reproducible live proof
-running locally — the marginal cost/complexity wasn't worth it for a portfolio
-project, though the path to do it is scoped and the code is already written to
-support the swap.
+**Q: Is this deployed live, and what did that require?**
+Yes — https://aipr-review-agent.onrender.com, on Render's free tier, fully
+public: fork the repo, open a PR, and the pipeline runs for real. Free hosting
+doesn't have the RAM to run the local 14B model that produced the strongest
+local results, so the deployed instance swaps to Groq's free hosted API
+(`llama-3.3-70b-versatile`) — a one-line config change behind the same
+`LLMClient` interface, which is exactly the point of that abstraction. Two
+real constraints shaped the deployment: Render's free tier has no background-
+worker service type at all, so the API and the ARQ worker run as two
+supervised processes in one container instead of two separate services; and
+Groq has no embeddings API, so the deployed instance's RAG grounding falls
+back to diff-only reasoning — local Ollama runs are the only ones with full
+architecture-grounding. `LLM_PROVIDER` stays fully configurable either way.
 
 ---
 
@@ -277,3 +276,38 @@ actually happened while building this:
    *What this shows: schema assumptions written for one provider don't
    silently carry over to another, and "should be unique" needs to actually be
    computed, not assumed.*
+
+8. **Free-tier hosting quietly rules out a whole architecture choice.** Render's
+   free tier only offers one process type (a web service) — no free background-
+   worker service at all. The fix wasn't code, it was re-scoping the deployment:
+   run the API and the ARQ worker as two processes inside one container, with a
+   supervisor script that exits (triggering Render's restart) if either process
+   dies, so a silent worker crash can't leave half the pipeline running
+   invisibly. *What this shows: infrastructure constraints on a target platform
+   can force an architecture decision as much as a technical requirement can —
+   worth checking a platform's actual free-tier limits before assuming a design
+   will just deploy as-is.*
+
+9. **An IP allowlist blocks a host that has no IP to allow.** The database
+   connected fine locally (after allowlisting my own IP earlier) but Render's
+   deploy hung with a `TimeoutError` — the exact same signature as the original
+   local IP-block symptom. Render's free tier doesn't provide a static outbound
+   IP (that's a paid add-on), so there was no single IP to add. Fix: remove the
+   IP allowlist entirely for this database, accepting that access control now
+   rests solely on the password. *What this shows: a security control that
+   depends on a stable network identity breaks for serverless/free-tier
+   compute by design, not by misconfiguration — the honest trade-off is between
+   IP-based restriction and paying for a static IP, not a fix that gets you both
+   for free.*
+
+10. **A dashboard silently corrupted a multi-line secret.** Pasting the GitHub
+    App's private key (a standard multi-line PEM) into Render's environment
+    variable field produced `InvalidKeyError: Could not parse the provided
+    public key` — the paste had been mangled somewhere between clipboard and
+    stored value. Rather than trust the next paste to go cleanly, I made the
+    parsing defensive: strip surrounding quotes, normalize `\r\n`, and unescape
+    literal `\n` sequences, so the code tolerates the paste even if the
+    dashboard mangles it a similar way again. *What this shows: when a bug
+    boundary is a third-party UI you don't control, the fix belongs on your
+    side of that boundary — you can't patch their paste handling, only your
+    parsing.*
