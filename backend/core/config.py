@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,7 +45,27 @@ class Settings(BaseSettings):
 
     webhook_max_body_bytes: int = 2_000_000
 
+    # observability — LLM-call/agent-execution tracing, complements agent_events
+    # (which is the business-level audit/cost ledger; LangSmith is execution-level
+    # tracing of the LangGraph run itself: per-node latency, tokens, errors).
+    langsmith_tracing: bool = False
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "aipr-review-agent"
+
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    # LangGraph/LangChain's tracing client reads these from the real process
+    # environment, not from this Settings object — pydantic-settings parses
+    # .env internally without exporting it to os.environ, so this export is
+    # what actually turns tracing on. Set both var-name generations (LangChain
+    # renamed LANGCHAIN_* to LANGSMITH_* over time; older/newer SDK versions
+    # may read either).
+    if settings.langsmith_tracing and settings.langsmith_api_key:
+        for prefix in ("LANGCHAIN", "LANGSMITH"):
+            os.environ.setdefault(f"{prefix}_TRACING_V2", "true")
+            os.environ.setdefault(f"{prefix}_TRACING", "true")
+            os.environ.setdefault(f"{prefix}_API_KEY", settings.langsmith_api_key)
+            os.environ.setdefault(f"{prefix}_PROJECT", settings.langsmith_project)
+    return settings
