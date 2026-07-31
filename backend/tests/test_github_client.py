@@ -50,3 +50,30 @@ def test_app_jwt_raises_without_app_id():
     settings = Settings(github_app_id=None, github_private_key=_generate_test_pem())
     with pytest.raises(RuntimeError):
         GitHubClient(settings)._app_jwt()
+
+
+def test_app_jwt_handles_literal_backslash_n(tmp_path):
+    pem = _generate_test_pem()
+    mangled = pem.replace("\n", "\\n")  # what a dashboard often stores from a single-line paste
+    settings = Settings(github_app_id="12345", github_private_key=mangled)
+    token = GitHubClient(settings)._app_jwt()
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["iss"] == "12345"
+
+
+def test_app_jwt_strips_surrounding_quotes(tmp_path):
+    pem = _generate_test_pem()
+    mangled = f'"{pem}"'
+    settings = Settings(github_app_id="12345", github_private_key=mangled)
+    token = GitHubClient(settings)._app_jwt()
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["iss"] == "12345"
+
+
+def test_app_jwt_handles_crlf(tmp_path):
+    pem = _generate_test_pem()
+    mangled = pem.replace("\n", "\r\n")
+    settings = Settings(github_app_id="12345", github_private_key=mangled)
+    token = GitHubClient(settings)._app_jwt()
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["iss"] == "12345"
