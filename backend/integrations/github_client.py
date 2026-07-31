@@ -29,9 +29,16 @@ class GitHubClient:
         self.settings = settings or get_settings()
 
     def _app_jwt(self) -> str:
-        if not (self.settings.github_app_id and self.settings.github_private_key_path):
-            raise RuntimeError("GITHUB_APP_ID / GITHUB_PRIVATE_KEY_PATH not configured")
-        private_key = Path(self.settings.github_private_key_path).read_text()
+        if not self.settings.github_app_id:
+            raise RuntimeError("GITHUB_APP_ID not configured")
+        if self.settings.github_private_key:
+            # env-var content — used on hosts with an ephemeral filesystem (e.g. Render),
+            # where a file path written at build time wouldn't survive a redeploy.
+            private_key = self.settings.github_private_key.replace("\\n", "\n")
+        elif self.settings.github_private_key_path:
+            private_key = Path(self.settings.github_private_key_path).read_text()
+        else:
+            raise RuntimeError("neither GITHUB_PRIVATE_KEY nor GITHUB_PRIVATE_KEY_PATH is configured")
         now = int(time.time())
         payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": self.settings.github_app_id}
         return jwt.encode(payload, private_key, algorithm="RS256")

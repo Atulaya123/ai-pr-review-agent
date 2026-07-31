@@ -115,6 +115,21 @@ a one-line env var swap either way.
 2. Copy it → `ANTHROPIC_API_KEY` in `.env`.
 3. Set `LLM_PROVIDER=anthropic` in `.env`.
 
+### Option C — Ollama (free, local, no account at all)
+1. `brew install ollama` (or see ollama.com for other platforms), then `ollama serve`.
+2. `ollama pull qwen2.5:14b-instruct` (~9GB download; a smaller model works too, just
+   less reliably — see `docs/INTERVIEW_PREP.md` for what changed between model sizes
+   in testing).
+3. Set `LLM_PROVIDER=ollama` in `.env`. No API key needed.
+
+### Option D — Groq (free hosted API — what the deployed instance uses)
+Local Ollama can't run on free-tier cloud hosting (not enough RAM for model
+weights), so the deployed version needs a real hosted API instead.
+1. **https://console.groq.com/keys** → sign up → **Create API Key**.
+2. Copy it → `GROQ_API_KEY` in `.env`.
+3. Set `LLM_PROVIDER=groq` in `.env`. Free tier includes `llama-3.3-70b-versatile`
+   — a bigger model than the 14B run locally in testing.
+
 ---
 
 ## Running the live demo
@@ -143,3 +158,66 @@ a review comment should appear, and:
 curl localhost:8000/api/reviews/<review_id_from_the_worker_log>
 ```
 should return the persisted findings.
+
+---
+
+## Deploying for free (so anyone can try it, no laptop required)
+
+This runs the whole pipeline on Render's free tier, using Groq (Option D above)
+for the LLM instead of local Ollama — free hosting doesn't have the RAM to run
+local model weights, so the deployed instance needs a real hosted API. RAG
+retrieval (the architecture-grounding capability) isn't wired for the deployed
+instance — Groq has no embeddings API — so the deployed reviewer reasons over
+the diff alone; local runs with Ollama still get full grounding.
+
+**Two new free accounts needed: Render (hosting) and Groq (LLM), on top of the
+GitHub App and Tiger Cloud you already set up above.**
+
+### 1. Render account + service
+
+1. **https://dashboard.render.com/register** → sign up (GitHub OAuth is easiest —
+   it'll also let you grant repo access in the same step). No credit card should
+   be asked for on the free tier.
+2. Once logged in, click **New +** → **Blueprint**.
+3. Connect the `ai-pr-review-agent` GitHub repo (grant Render access if prompted).
+   Render will detect `render.yaml` in the repo root and show you two services:
+   `aipr-review-agent` (the web service) and `aipr-review-queue` (free Redis).
+4. Click **Apply** / **Create New Resources**. Render will prompt you to fill in
+   the env vars marked `sync: false` in `render.yaml` — paste in:
+   - `TIGER_DATABASE_URL` — the same value from your local `.env`
+   - `GROQ_API_KEY` — from step 3 below
+   - `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET` — same values as your local `.env`
+   - `GITHUB_PRIVATE_KEY` — **not** the file path this time. Open your `.pem`
+     file in a text editor, copy its *entire contents* (including the
+     `-----BEGIN...` / `-----END...` lines), and paste the whole thing as the
+     value.
+5. Click deploy. First build takes a few minutes. Once live, Render shows a URL
+   like `https://aipr-review-agent.onrender.com`.
+
+### 2. Groq API key
+
+1. **https://console.groq.com/keys** → sign up → **Create API Key** → copy it.
+   That's the `GROQ_API_KEY` value from step 1.4 above.
+
+### 3. Point the GitHub App at the deployed URL
+
+1. Go back to your GitHub App's settings page (**github.com/settings/apps** →
+   your app → General).
+2. **Webhook URL** → replace the old ngrok URL with:
+   `https://aipr-review-agent.onrender.com/webhook` (use your actual Render URL).
+3. Save.
+
+### 4. Try it
+
+Open a pull request on the repo (or have someone else fork it and open one
+against your repo — the App fires on any PR opened against the repo it's
+installed on, regardless of who opens it). Render's free tier sleeps after 15
+minutes of inactivity, so the very first request after a quiet period can take
+30-60 seconds to wake up — GitHub will retry the webhook delivery automatically
+if the first attempt times out, so the review still lands, just not instantly
+on a cold start.
+
+```bash
+curl https://aipr-review-agent.onrender.com/health
+curl https://aipr-review-agent.onrender.com/api/reviews/<review_id>
+```

@@ -19,6 +19,7 @@ _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
     "ollama": "qwen2.5:14b-instruct",
+    "groq": "llama-3.3-70b-versatile",
     "mock": "mock",
 }
 

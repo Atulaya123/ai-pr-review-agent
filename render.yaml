@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: aipr-review-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: bash scripts/start_render.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TIGER_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: aipr-review-queue
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: GITHUB_PRIVATE_KEY
+        sync: false
+      - key: HITL_CONFIDENCE_THRESHOLD
+        value: "0.75"
+      - key: DAILY_BUDGET_USD
+        value: "5.0"
+
+  - type: keyvalue
+    name: aipr-review-queue
+    plan: free
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: allow all (free-tier demo queue, no sensitive data)
