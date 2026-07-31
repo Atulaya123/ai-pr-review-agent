@@ -1,5 +1,9 @@
 # AI PR Review Agent
 
+**Live and publicly triggerable: https://aipr-review-agent.onrender.com** — fork this repo,
+open a PR against it, and watch four AI specialists review it for real. No laptop required;
+see [example #5](https://github.com/Atulaya123/ai-pr-review-agent/pull/5) for a real run.
+
 A production-grade AI pull-request review agent: four specialist reasoners (security,
 quality, tests, docs) fan out over a diff in parallel via LangGraph, each grounded in
 retrieved codebase context, merged by a confidence-weighted HITL aggregator, with every
@@ -11,18 +15,20 @@ built against.
 
 **Docs:** [`docs/LEARN_THE_STACK.md`](docs/LEARN_THE_STACK.md) (start here if any tool in this
 repo is unfamiliar — a from-zero primer on every technology used, in plain English) ·
-[`docs/SETUP.md`](docs/SETUP.md) (step-by-step credential setup for the live demo) ·
+[`docs/SETUP.md`](docs/SETUP.md) (step-by-step credential setup, local + free deployment) ·
 [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) (tech stack & design
 trade-offs, with what was given up) · [`docs/INTERVIEW_PREP.md`](docs/INTERVIEW_PREP.md)
 (Q&A defense of this project, including real bugs found while building it)
 
 ## Status
 
-**M1 — Core review loop, local & mocked — done.** Ingress → queue → LangGraph fan-out
-(security/quality/tests/docs) → aggregator → confidence-weighted HITL gate → persistence,
-all running locally with a mock LLM client (no API keys required). See `.genesis/PLAN.md`
-for M2 (live GitHub App + Tiger Cloud + OpenAI), M3 (dashboard/economics), M4 (reliability/
-security hardening).
+**Live and deployed.** The full pipeline (webhook → queue → 4-agent LangGraph fan-out →
+confidence-weighted HITL gate → posted review) runs on Render's free tier using Groq's free
+API (`llama-3.3-70b-versatile`) for reasoning — genuinely triggerable by anyone, not just a
+local demo. `LLM_PROVIDER` stays fully configurable: clone the repo and run `ollama` locally
+instead for zero external dependency (with full RAG grounding over the codebase's own
+architecture rules, which the deployed instance doesn't have — Groq has no embeddings API).
+See `.genesis/PLAN.md` for remaining scope (M3 dashboard/economics, M4 fault-injection tests).
 
 ## Architecture at a glance
 
@@ -48,7 +54,7 @@ PYTHONPATH=. python -m scripts.init_db
 PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini
 ```
 
-All 14 tests should pass, including `test_pipeline_flags_sql_injection_and_blocks` — the
+All 24 tests should pass, including `test_pipeline_flags_sql_injection_and_blocks` — the
 real end-to-end path: a fixture diff with an unparameterized SQL query goes through the
 actual LangGraph graph (mock LLM client, zero network calls) and comes back with a
 `CRITICAL` finding and a `CRITICAL_BLOCK` outcome.
@@ -69,24 +75,29 @@ curl localhost:8000/health
 curl localhost:8000/api/reviews/<review_id>   # after a job has run
 ```
 
-## Getting to a live demo (M2)
+## Getting to a live demo
 
-You need three sets of credentials — full step-by-step for each is in the conversation
-history / ask again if needed:
+Full step-by-step in `docs/SETUP.md`. Summary:
 
 1. **GitHub App** (webhook + posting reviews) → `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET`,
-   `GITHUB_PRIVATE_KEY_PATH`
+   `GITHUB_PRIVATE_KEY_PATH` (local) or `GITHUB_PRIVATE_KEY` (deployed — raw PEM content,
+   since free hosts have an ephemeral filesystem)
 2. **Tiger Cloud** (the database — free trial, no card) → `TIGER_DATABASE_URL`, then run
-   `scripts/migrations/2026-06-tiger-init.sql` against it
-3. **OpenAI** (or Anthropic) → `OPENAI_API_KEY` and set `LLM_PROVIDER=openai`
+   `scripts/migrations/2026-06-tiger-init.sql` against it. Its IP allowlist needs to permit
+   whatever's connecting — your own IP for local dev, opened up entirely for a host with no
+   static IP (most free tiers, including Render's)
+3. **LLM**: `ollama` (free, local, full RAG grounding) or `groq` (free, hosted — what the
+   deployed instance uses, no embeddings support though) or `openai`/`anthropic`
 
-Put all of these in `.env` (gitignored) — never in source, never committed.
+Put local credentials in `.env` (gitignored) — never in source, never committed. Deployed
+credentials go in the hosting platform's own environment variable UI (see `render.yaml`).
 
 ## Project layout
 
 See `.genesis/DONE.html` section 4 and `pr-review-agent.html` section 4.2 for the full
-module map. Everything under `backend/` is implemented per that map; `backend/memory/`
-(RAG retrieval) is stubbed pending M2 Tiger Cloud credentials.
+module map. `backend/memory/` implements real retrieval (local Ollama embeddings + pgvector
+cosine search) against this project's own architecture rules, ingested via
+`scripts/ingest_docs.py` — not wired for the deployed instance (Groq has no embeddings API).
 
 ## Tests
 
