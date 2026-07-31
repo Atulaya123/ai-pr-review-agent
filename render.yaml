@@ -13,6 +13,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: aipr-review-queue
+          type: keyvalue
           property: connectionString
       - key: LLM_PROVIDER
         value: groq
