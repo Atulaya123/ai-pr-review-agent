@@ -117,7 +117,39 @@ concurrency-coordination code by hand for that."
 
 ---
 
-## 5. Talking to an LLM — prompts, JSON mode, and why models make things up
+## 5. Watching what the graph actually did — LangSmith
+
+**The problem it solves:** once four things are running in parallel and merging into one
+result, "why did this review come out the way it did" stops being answerable just by reading
+code — you need to see the actual execution: which node ran when, how long each took, what
+each specialist's LLM call was actually asked and actually answered, and where an error (if
+any) happened.
+
+**LangSmith:** a hosted tracing service, built by the same company as LangGraph, that
+LangGraph can report to automatically — turn it on with three environment variables
+(`LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`) and no code changes, and
+every graph run shows up as a tree in a web dashboard: the whole review as the root, the four
+specialists as parallel children, each one expandable down to the exact prompt sent and
+response received. This project's `backend/core/config.py` exports those variables into the
+real process environment on startup (see section 2's note on "environment variable," this is
+the same mechanism) because LangGraph reads them from there, not from this project's own
+settings object.
+
+**Why this is a second, different thing from `agent_events`:** `agent_events` (the Tiger Cloud
+table from section 8) is the *business*-level record — one row per review-relevant decision,
+kept forever, queried by the app itself for cost/audit purposes. LangSmith is *execution*-level
+tracing — every LLM call's raw prompt/response, kept for debugging, viewed by a human in a
+dashboard, not queried by the application. Same underlying events, two different audiences and
+two different lifetimes.
+
+**Say this if asked:** "LangSmith traces the LangGraph execution itself — I can open a
+dashboard and see the four specialists' actual prompts and responses side by side for any
+review, which is what I used to debug why grounding wasn't changing the model's answers during
+development, before I could fix the prompts to actually use it."
+
+---
+
+## 6. Talking to an LLM — prompts, JSON mode, and why models make things up
 
 **System prompt vs. user prompt:** every LLM call has two main parts. The **system prompt**
 sets the model's role and rules ("you are the security specialist, look for X, respond in
@@ -149,7 +181,7 @@ limitation — I saw a hallucinated finding reported at 100% confidence in testi
 
 ---
 
-## 6. Grounding the model in facts it doesn't have — RAG, embeddings, vector search
+## 7. Grounding the model in facts it doesn't have — RAG, embeddings, vector search
 
 **The problem:** handed only a diff, a model has no idea whether this change violates a rule
 your team wrote down somewhere else in the repo. It's judging in a vacuum.
@@ -185,7 +217,7 @@ firing correctly on its own before trusting the full pipeline's output."
 
 ---
 
-## 7. The database — Postgres, SQLAlchemy, Tiger Cloud, TimescaleDB, hypertables
+## 8. The database — Postgres, SQLAlchemy, Tiger Cloud, TimescaleDB, hypertables
 
 **PostgreSQL ("Postgres"):** a relational database — data stored in tables with rows and
 columns, related to each other (a review has many findings; that's a "relationship").
@@ -223,7 +255,7 @@ databases."
 
 ---
 
-## 8. The decision layer — confidence-weighted HITL gating
+## 9. The decision layer — confidence-weighted HITL gating
 
 **HITL = Human-In-The-Loop.** A design principle: the system doesn't have to be either "fully
 automatic" or "fully manual" — it can automate the easy, confident cases and route the
@@ -248,7 +280,7 @@ wrong is too costly to automate."
 
 ---
 
-## 9. Talking to GitHub as a bot — GitHub Apps, JWT, installation tokens
+## 10. Talking to GitHub as a bot — GitHub Apps, JWT, installation tokens
 
 **Why not just use a personal access token (PAT)?** A PAT acts as *you* — broad permissions
 tied to your personal account, and it breaks if you ever leave. A **GitHub App** is a
@@ -272,7 +304,7 @@ GitHub API to fetch diffs and post reviews, never the JWT directly."
 
 ---
 
-## 10. Running AI locally for free — Ollama
+## 11. Running AI locally for free — Ollama
 
 **What it is:** software that runs LLMs directly on your own computer's hardware, instead of
 calling a company's API over the internet. No API key, no per-call cost, no data leaving your
@@ -300,7 +332,7 @@ always-on deployment without paying for compute, though not put into live use.
 
 ---
 
-## 11. Making the system fail safely — timeouts, retries, circuit breakers
+## 12. Making the system fail safely — timeouts, retries, circuit breakers
 
 Three separate, standard reliability patterns, each solving a different failure mode
 (`backend/reliability/`):
@@ -325,7 +357,7 @@ example where skipping this on purpose caused a real crash in testing."
 
 ---
 
-## 12. Verifying the code actually works — pytest, mypy, Docker
+## 13. Verifying the code actually works — pytest, mypy, Docker
 
 **pytest:** the standard Python testing tool. A "test" is a small script that runs some code
 and asserts the result is what's expected; `pytest` finds and runs all of them
@@ -360,6 +392,7 @@ machine with one command."
 | Idempotent | Doing it twice has the same effect as doing it once. |
 | Queue (Redis/ARQ) | A waiting list of jobs a separate worker process works through, decoupling "acknowledge fast" from "do slow work." |
 | LangGraph | A library for running multiple AI steps as a graph, including ones that run in parallel. |
+| LangSmith | A hosted dashboard that traces a LangGraph run's actual node execution, prompts, and responses. |
 | System / user prompt | The AI's role+rules, vs. the actual thing it's asked to look at. |
 | Hallucination | An LLM confidently generating a plausible-sounding but false claim. |
 | RAG | Fetch relevant facts first, then hand them to the model alongside the question. |
