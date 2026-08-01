@@ -56,6 +56,18 @@ overrides or what convention it violates, so it guesses confidently) and a
 confidence field on every finding that drives the HITL gate, so low-confidence
 claims never reach a human as if they were certain.
 
+**Q: How do you debug a multi-agent system when something's wrong with one
+specialist's output but not the others?** LangSmith, added after the fact —
+it traces the LangGraph run as a tree, the four specialists as parallel
+children of the review, each expandable to the exact prompt and response.
+Before it was wired up, diagnosing the grounding-not-being-used bug (see
+Field Notes below) meant manually calling the retrieval function in isolation
+to confirm it worked, then separately inspecting raw LLM outputs to notice
+they never cited the retrieved rules — two disconnected checks. With LangSmith
+in place now, that same class of bug is one trace to look at instead of two
+separate manual verifications, which is the actual reason I added it rather
+than treating the custom `agent_events` table as sufficient on its own.
+
 **Q: How do you handle prompt injection from a malicious diff?**
 Two independent defenses, not one. Structural: diff/code content is always fenced
 with explicit `<<<UNTRUSTED_...>>>` delimiters and the system prompt explicitly
@@ -311,3 +323,20 @@ actually happened while building this:
     boundary is a third-party UI you don't control, the fix belongs on your
     side of that boundary — you can't patch their paste handling, only your
     parsing.*
+
+11. **A test that cleaned up after itself still leaked a real network call.**
+    Adding LangSmith tracing, I wrote a test that set `LANGSMITH_TRACING=true`
+    with a fake key, asserted the env vars exported correctly, then reverted
+    them in a `finally` block. The test suite still logged a real (harmless,
+    403) HTTP call to `api.smith.langchain.com` — after the "passed" summary
+    line, not during. LangChain's tracing client buffers and flushes on a
+    background thread at process exit, independent of whatever the env var
+    said by the time that thread ran; reverting the var promptly wasn't good
+    enough because the client object had already been initialized with the
+    fake key. Fix: extract the env-var computation into a pure function with
+    no side effects, and test *that* — never actually flip the real tracing
+    switch in a test at all. *What this shows: "I cleaned up after the test"
+    isn't the same guarantee as "the test had no side effects" — a library
+    can hold onto state (or a background thread) longer than your test scope
+    assumes, and the fix is to avoid triggering the real mechanism, not to
+    clean up faster.*

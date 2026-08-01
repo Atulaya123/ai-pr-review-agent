@@ -132,6 +132,31 @@ weights), so the deployed version needs a real hosted API instead.
 
 ---
 
+## 4. LangSmith tracing (optional)
+
+Traces the LangGraph run itself — per-node latency, token usage, errors across the
+four-specialist fan-out. Complements `agent_events` (the business-level audit/cost
+ledger) rather than replacing it. Free tier, no card required.
+
+1. **https://smith.langchain.com** → sign up → **Settings** → **API Keys** →
+   **Create API Key**. Key type: Personal Access Token. Expiration: `Never` is
+   simplest for a portfolio project, or `90d` if you'd rather rotate periodically.
+2. Add to `.env`:
+   ```
+   LANGSMITH_TRACING=true
+   LANGSMITH_API_KEY=<your key>
+   LANGSMITH_PROJECT=aipr-review-agent
+   ```
+3. Run any review (locally or via the deployed webhook) and check
+   **smith.langchain.com** → your project → you'll see one trace per review,
+   with the four specialists' nodes nested under it as parallel children.
+
+Heads up: PR diff content flows through LangSmith's servers as part of the trace
+when this is on — the same untrusted-input consideration as any other LLM call
+in this system, just routed through a third party now too.
+
+---
+
 ## Running the live demo
 
 ```bash
@@ -191,6 +216,8 @@ GitHub App and Tiger Cloud you already set up above.**
      file in a text editor, copy its *entire contents* (including the
      `-----BEGIN...` / `-----END...` lines), and paste the whole thing as the
      value.
+   - `LANGSMITH_API_KEY` — optional, same value as your local `.env` if you set
+     up tracing (section 4 above); leave blank to skip it on the deployed instance.
 5. Click deploy. First build takes a few minutes. Once live, Render shows a URL
    like `https://aipr-review-agent.onrender.com`.
 

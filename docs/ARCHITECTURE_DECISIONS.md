@@ -184,3 +184,38 @@ against. This is exactly the kind of bug that only shows up when you actually ru
 the thing end-to-end rather than trust that the unit tests passing means the
 system works — which is why every claim of "this works" in this project is backed
 by a real command and its real output, not just green test output.
+
+---
+
+## 10. Observability: LangSmith alongside `agent_events`, not instead of it
+
+**Chosen:** `agent_events` (the Tiger Cloud hypertable) stays the system's
+business-level audit/cost ledger — queried by the app itself, retained
+indefinitely, one row per action. LangSmith is added on top as *execution*-level
+tracing — the LangGraph run's actual node graph, prompts, and responses, viewed
+by a human in a dashboard, off by default (`LANGSMITH_TRACING=false`).
+
+**Why not just pick one:** they answer different questions. `agent_events`
+answers "what did this review decide, and what did it cost" — the question the
+app itself needs answered to enforce a budget or show a cost dashboard.
+LangSmith answers "why did the quality specialist say what it said" — a
+debugging question a human asks, needing the raw prompt/response, not a summary
+row. Building that level of prompt/response introspection into `agent_events`
+would mean reinventing what LangSmith already does well, for a need
+(debugging, not production auditing) that doesn't need to survive the
+hypertable's retention policy anyway.
+
+**What it cost to actually verify this worked, not just wire it:** enabling
+tracing during a test with a placeholder key caused a real, if harmless,
+outbound HTTP call to LangSmith's API from within the test suite — LangChain's
+tracing client buffers and flushes on a background thread independent of when
+the triggering test finished and reverted its env vars. The fix was structural
+(test a pure env-var-computation function, never flip the real tracing switch
+in a test), not just "clean up faster." Full write-up in
+`docs/INTERVIEW_PREP.md`'s bug list.
+
+**Trade-off accepted:** diff content now flows through a third party
+(LangSmith's servers) as part of any trace, when tracing is on — the same
+untrusted-input posture as any LLM call in this system, just with one more
+hop. Off by default for exactly this reason; it's an opt-in debugging tool,
+not a required part of the pipeline.

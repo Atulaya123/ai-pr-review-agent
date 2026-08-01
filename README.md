@@ -38,7 +38,9 @@ GitHub PR → FastAPI ingress (HMAC + idempotency) → Redis/ARQ queue → ARQ w
                             ├─ quality agent   ─┤→ aggregator (dedup, confidence, HITL gate) → GitHub review
                             ├─ tests agent     ─┤
                             └─ docs agent      ─┘
-  → agent_events (observability) + pr_review_records/finding_records (truth) in Postgres/Tiger Cloud
+  → agent_events (business-level audit/cost ledger) + pr_review_records/finding_records (truth)
+    in Postgres/Tiger Cloud, plus optional LangSmith tracing (execution-level: per-node
+    latency/tokens/errors on the LangGraph run itself — LANGSMITH_TRACING=true)
 ```
 
 ## Run the M1 demo (no credentials needed)
@@ -102,7 +104,7 @@ cosine search) against this project's own architecture rules, ingested via
 ## Tests
 
 ```bash
-PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini   # 14 tests
+PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini   # 30 tests
 PYTHONPATH=. mypy backend --ignore-missing-imports                      # clean
 ```
 
