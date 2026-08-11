@@ -223,6 +223,72 @@ architecture-grounding. `LLM_PROVIDER` stays fully configurable either way.
 
 ---
 
+## Deferred until scale actually demands it
+
+Every row here was a conscious "not yet," not an oversight — the third column is the
+actual trigger that would justify switching, not a vague "eventually we should."
+
+| Today | At real scale | What would force the switch |
+|---|---|---|
+| Slack notification called inline, isolated with try/except | Transactional outbox: write the review row + an outbox event in one Postgres transaction, a separate relay publishes to a broker (Kafka/SQS), Slack — and any future consumer — subscribes independently | More than one downstream consumer of "a review was posted." Right now there's exactly one (Slack), so decoupling it buys nothing yet — outbox+Kafka solves fan-out to *many* consumers, not the dual-write bug I actually hit, which the persist-then-isolate fix already closes |
+| Redis/ARQ as the job queue | Kafka, SQS, or another durable broker | Redis has no durability guarantee by default — a crash without persistence configured loses in-flight jobs, and there's no replay. Fine while losing a job means re-running a demo; a real risk once losing a job means losing a real review |
+| In-memory LangGraph checkpointer (`MemorySaver`) | Redis- or Postgres-backed checkpointer | A worker crash mid-review currently loses that run's progress silently — acceptable for a demo, not once a review is slow/expensive enough that re-running from scratch is a real cost |
+| Single ARQ worker process | Horizontally scaled worker pool | Queue depth growing faster than one worker drains it. The queue already decouples this, so scaling out is a deploy/config change, not a redesign |
+
+**Say this if asked "why not just build the scalable version now":** "Every one of these
+has a known, standard fix, and I can name it — the reason I didn't build it yet is that
+none of the triggers that would justify it exist at this project's actual scale. Building
+for a load pattern that doesn't exist is its own cost: more infra to run, monitor, and
+explain, for a problem I don't have. So each one is scoped as 'here's the fix, here's
+what would tell me it's time,' not skipped and not built prematurely either."
+
+---
+
+## Where this maps onto standard GenAI system-design patterns
+
+Cross-checked against three reference frameworks (FinOps cost-optimization, MCP,
+Agentic RAG) to see what's actually built versus what's a plausible next step.
+Verified against the code, not the architecture diagram — the `daily_budget_usd`
+row below is exactly the kind of gap that only shows up this way.
+
+**Implemented:**
+
+| Pattern | Where | Note |
+|---|---|---|
+| RAG (single-source vector retrieval) | `backend/memory/` (`embedder.py`, `context_retriever.py`, `tiger_client.py`) | Top-k cosine similarity over `pgvector`/DiskANN, no relevance grading — see gap below |
+| LLM Gateway | `backend/tools/llm_client.py` | Provider-agnostic `LLMClient` ABC — Mock/OpenAI/Anthropic/Groq/Ollama behind one interface |
+| Multi-agent collaboration | `backend/agents/` + `backend/orchestrator/` | Four specialist reasoners (security, quality, tests, docs) fan out in parallel, one aggregator merges — this *is* the "Multi-Agent Collaboration" agentic pattern |
+| Stateful workflow / state management | `backend/orchestrator/graph.py`, `state.py` | LangGraph `StateGraph`, Pregel-style superstep execution, checkpointing |
+| Response validation gate | `backend/orchestrator/nodes.py` (aggregator, `min(confidence)`) | Confidence-weighted HITL escalation — validates the specialists' self-reported confidence, **not** groundedness against retrieved sources (that's a real gap, see below) |
+| Resilience: retry, circuit breaking, timeouts | `backend/reliability/` (`retry.py`, `circuit_breaker.py`, `timeout.py`) | Exponential backoff + jitter, per-dependency circuit breaker, provider-specific timeout ceilings (90s for local Ollama vs 20s default) |
+| Graceful degradation | `context_retriever.py` | Retrieval failure is caught and swallowed — falls back to diff-only reasoning rather than sinking the review |
+| Structured output | `llm_client.py` (`response_format={"type": "json_object"}`) | JSON mode, not schema-constrained function calling |
+| Cost/audit observability | `agent_events` hypertable + optional LangSmith tracing | Per-action cost ledger (business-level) plus opt-in execution-level tracing — see decision #10 in `ARCHITECTURE_DECISIONS.md` |
+
+**Gaps — real, not oversights, each with why it'd matter:**
+
+| Pattern | Status | Why it'd matter |
+|---|---|---|
+| Semantic response caching | Not implemented — only `functools.lru_cache` on static prompt templates | Genuine cost lever: similar diffs across PRs in the same repo are a natural cache key; industry numbers put semantic-cache hit rates at 15-70% |
+| Tiered / complexity-based model routing | Not implemented — one model per environment via `LLM_PROVIDER`, not per-request | Cheap-model-first routing for simple diffs, escalate only when needed, is a standard 30-50% cost lever this doesn't use yet |
+| Document relevance grading (Corrective RAG) | Not implemented — top-k chunks are used unconditionally | No check that retrieved context is actually relevant before handing it to specialists; a bad embedding match currently degrades silently |
+| Groundedness / hallucination validation | Not implemented — confuse this with the confidence gate at your own risk | The HITL gate checks confidence scores the specialists report about *themselves*; nothing verifies a specialist's claim is actually supported by the retrieved context |
+| Query reformulation, multi-source routing | Not implemented — single vector-DB source, no fallback to web/SQL/parametric | Only matters if retrieval quality becomes a measured problem; premature before that |
+| Reflection / iterative self-correction | Not implemented — single-pass generation per specialist | No agent re-evaluates its own output before it's aggregated |
+| MCP | Not implemented | Natural next step — fits behind the existing `LLMClient`/`workflow_engine` seams without restructuring anything |
+| Budget enforcement | **Looks implemented, isn't** — `daily_budget_usd` exists in `backend/core/config.py` but nothing in the codebase reads it | A config field with no enforcement path is worse than no field: it reads as a control that doesn't actually control anything |
+| Fine-tuning (LoRA/QLoRA) | Not applicable | No self-hosted model — every provider is a hosted API, so there's nothing to fine-tune onto |
+
+**Say this if asked "why not add semantic caching / model routing / MCP now":**
+"Same answer as the infra-scaling table above — I can name the standard fix for
+each of these, and none of them are free: caching adds a staleness-vs-hit-rate
+tuning problem, tiered routing needs a complexity classifier that itself costs
+something to get wrong, MCP is worth it once there's a second consumer of these
+tools beyond this one pipeline. Building them now would be optimizing a cost
+structure I haven't measured yet."
+
+---
+
 ## "Tell me about a bug you ran into" — use the real ones
 
 These are strictly better answers than anything hypothetical, because they
