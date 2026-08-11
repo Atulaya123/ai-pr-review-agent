@@ -268,6 +268,13 @@ row below is exactly the kind of gap that only shows up this way.
 | Agent Eval: retrieval metrics | `backend/evaluation/retrieval_metrics.py` (pure) + `scripts/run_eval.py` (DB-backed) | Recall@k and MRR against a hand-built query→expected-chunk test set (`backend/evaluation/dataset.py`) — run via `python -m scripts.run_eval` after `python -m scripts.ingest_docs` |
 | Agent Eval: generation metrics | `backend/evaluation/generation_metrics.py` | Faithfulness (does a finding's rationale trace back to retrieved context?) and Relevance (does it actually address the diff?) via LLM-as-judge — this is the real fix for the groundedness gap the confidence gate doesn't cover, see below |
 
+**To actually see these numbers:** `docs/SETUP.md`'s "Running Agent Eval"
+section has the exact commands and real sample output from this repo's own
+Tiger Cloud instance (Recall@3=1.00, MRR=0.889, Faithfulness=0.33,
+Relevance=0.67 on the deliberately mixed generation test set) — worth having
+those numbers memorized, since "what did you measure" is a natural follow-up
+to "I built an eval harness."
+
 **Gaps — real, not oversights, each with why it'd matter:**
 
 | Pattern | Status | Why it'd matter |
