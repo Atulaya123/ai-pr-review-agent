@@ -23,6 +23,13 @@ _LLM_MODEL_BY_PROVIDER = {
     "mock": "mock",
 }
 
+
+def resolve_model_for_provider(provider: str) -> str:
+    """Shared with backend/evaluation/ so the eval harness judges with the same
+    model a real review would actually use for the active LLM_PROVIDER."""
+    return _LLM_MODEL_BY_PROVIDER.get(provider, "mock")
+
+
 logger = logging.getLogger(__name__)
 
 # one breaker per process is enough for M1; M2 can key this per-provider if needed
@@ -39,7 +46,7 @@ class SpecialistAgent:
     def __init__(self, agent_type: AgentType, llm_client: LLMClient, model: str | None = None):
         self.agent_type = agent_type
         self.llm_client = llm_client
-        self.model = model or _LLM_MODEL_BY_PROVIDER.get(get_settings().llm_provider, "mock")
+        self.model = model or resolve_model_for_provider(get_settings().llm_provider)
 
     def _build_user_prompt(self, request: ReviewRequest, retrieved_context: str) -> str:
         diff_text = "\n".join(f"--- {f.path} ---\n{f.patch}" for f in request.files)

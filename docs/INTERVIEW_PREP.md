@@ -234,6 +234,7 @@ actual trigger that would justify switching, not a vague "eventually we should."
 | Redis/ARQ as the job queue | Kafka, SQS, or another durable broker | Redis has no durability guarantee by default — a crash without persistence configured loses in-flight jobs, and there's no replay. Fine while losing a job means re-running a demo; a real risk once losing a job means losing a real review |
 | In-memory LangGraph checkpointer (`MemorySaver`) | Redis- or Postgres-backed checkpointer | A worker crash mid-review currently loses that run's progress silently — acceptable for a demo, not once a review is slow/expensive enough that re-running from scratch is a real cost |
 | Single ARQ worker process | Horizontally scaled worker pool | Queue depth growing faster than one worker drains it. The queue already decouples this, so scaling out is a deploy/config change, not a redesign |
+| Offline Agent Eval (`scripts/run_eval.py`), run by hand against a fixed test set | Production monitoring: sample 1-5% of live traffic, async evaluation off the request path, dashboards, threshold alerts, `hitl_feedback` disputes feeding back into the test set | A measured drift problem — the offline harness can't tell you retrieval quality degraded as the corpus grew, only production sampling over time can. `hitl_feedback` already captures the human-dispute signal that flywheel would consume; nothing reads it yet |
 
 **Say this if asked "why not just build the scalable version now":** "Every one of these
 has a known, standard fix, and I can name it — the reason I didn't build it yet is that
@@ -264,6 +265,8 @@ row below is exactly the kind of gap that only shows up this way.
 | Graceful degradation | `context_retriever.py` | Retrieval failure is caught and swallowed — falls back to diff-only reasoning rather than sinking the review |
 | Structured output | `llm_client.py` (`response_format={"type": "json_object"}`) | JSON mode, not schema-constrained function calling |
 | Cost/audit observability | `agent_events` hypertable + optional LangSmith tracing | Per-action cost ledger (business-level) plus opt-in execution-level tracing — see decision #10 in `ARCHITECTURE_DECISIONS.md` |
+| Agent Eval: retrieval metrics | `backend/evaluation/retrieval_metrics.py` (pure) + `scripts/run_eval.py` (DB-backed) | Recall@k and MRR against a hand-built query→expected-chunk test set (`backend/evaluation/dataset.py`) — run via `python -m scripts.run_eval` after `python -m scripts.ingest_docs` |
+| Agent Eval: generation metrics | `backend/evaluation/generation_metrics.py` | Faithfulness (does a finding's rationale trace back to retrieved context?) and Relevance (does it actually address the diff?) via LLM-as-judge — this is the real fix for the groundedness gap the confidence gate doesn't cover, see below |
 
 **Gaps — real, not oversights, each with why it'd matter:**
 
@@ -271,13 +274,51 @@ row below is exactly the kind of gap that only shows up this way.
 |---|---|---|
 | Semantic response caching | Not implemented — only `functools.lru_cache` on static prompt templates | Genuine cost lever: similar diffs across PRs in the same repo are a natural cache key; industry numbers put semantic-cache hit rates at 15-70% |
 | Tiered / complexity-based model routing | Not implemented — one model per environment via `LLM_PROVIDER`, not per-request | Cheap-model-first routing for simple diffs, escalate only when needed, is a standard 30-50% cost lever this doesn't use yet |
-| Document relevance grading (Corrective RAG) | Not implemented — top-k chunks are used unconditionally | No check that retrieved context is actually relevant before handing it to specialists; a bad embedding match currently degrades silently |
-| Groundedness / hallucination validation | Not implemented — confuse this with the confidence gate at your own risk | The HITL gate checks confidence scores the specialists report about *themselves*; nothing verifies a specialist's claim is actually supported by the retrieved context |
+| Document relevance grading (Corrective RAG) | Not implemented — top-k chunks are used unconditionally | No check that retrieved context is actually relevant before handing it to specialists; a bad embedding match currently degrades silently. Different from Agent Eval's faithfulness check above: that scores output *after* generation, this would filter input *before* it |
+| Real chunking strategy | Not implemented — `scripts/ingest_docs.py` hardcodes six hand-written paragraphs, one per architectural invariant, embedded whole | See the chunking-strategies note below — the `code_chunks` schema (`path`, `symbol`, `chunk_index`) already anticipates document-aware chunking, ingestion just doesn't do it yet |
 | Query reformulation, multi-source routing | Not implemented — single vector-DB source, no fallback to web/SQL/parametric | Only matters if retrieval quality becomes a measured problem; premature before that |
 | Reflection / iterative self-correction | Not implemented — single-pass generation per specialist | No agent re-evaluates its own output before it's aggregated |
 | MCP | Not implemented | Natural next step — fits behind the existing `LLMClient`/`workflow_engine` seams without restructuring anything |
 | Budget enforcement | **Looks implemented, isn't** — `daily_budget_usd` exists in `backend/core/config.py` but nothing in the codebase reads it | A config field with no enforcement path is worse than no field: it reads as a control that doesn't actually control anything |
 | Fine-tuning (LoRA/QLoRA) | Not applicable | No self-hosted model — every provider is a hosted API, so there's nothing to fine-tune onto |
+
+**Say this if asked "what's Agent Eval scoring, exactly, and why isn't the confidence
+gate enough":** "The HITL gate (`backend/hitl/gate.py`) takes the minimum confidence a
+specialist *reports about itself* — it catches a specialist that says 'I'm only 40% sure,'
+but it can't catch a specialist that's fully confident and wrong. Faithfulness scoring
+closes that gap: it's a second LLM call that checks the finding's rationale against the
+actual retrieved context, the same way a human reviewer asks 'where does it say that?'
+instead of trusting the tone of the answer. They're complementary, not redundant — one's
+about the specialist's own uncertainty, the other's about whether the claim is actually
+true given what it saw."
+
+**Chunking strategies — where this project actually stands:** there isn't a real chunking
+pipeline here. `scripts/ingest_docs.py` embeds six manually written paragraphs verbatim —
+each one pre-sized to be a single coherent unit, no splitting logic at all. That's fine for
+"ingest this project's own six invariants," but it wouldn't survive contact with "ingest
+this repo's actual source files." The three standard strategies, and which one this
+project's schema is already shaped for:
+- **Fixed-size** (e.g. 512 tokens, 10-20% overlap): simplest, zero semantic awareness,
+  best for logs/transcripts — not a good fit here, the content is source code and docs.
+- **Semantic** (embed sentences, split at similarity drops): 15-40% precision improvement
+  on structured documents, but adds ingestion-time compute — worth it once retrieval
+  quality is actually measured and found wanting (see Corrective RAG gap above).
+- **Document-aware** (Markdown → headers, source code → function/class boundaries): the
+  best fit for this codebase, and notably the `code_chunks` table already has `path`,
+  `symbol`, and `chunk_index` columns — the schema was built anticipating function/class-
+  level chunks, ingestion just hasn't caught up to what the schema already supports.
+
+**RAG evaluation framework — what's built vs. the full production picture:** Agent Eval
+(above) covers the test-set-driven half of a real RAG eval framework: Recall@k/MRR for
+retrieval, Faithfulness/Relevance via LLM-as-judge for generation, run offline against a
+fixed test set. What it deliberately doesn't do yet is the *production monitoring* half —
+sampling 1-5% of live traffic, running evaluation async off the request path, dashboards,
+threshold-based alerts, and feeding disputed findings back into the test set as a data
+flywheel. `hitl_feedback` (`backend/database/models.py`) already captures human dispute
+signal per finding — the raw material for that flywheel exists, nothing reads it yet. That
+production-monitoring layer is a "Deferred until scale actually demands it" item, same
+reasoning as the rest of that table: it's real infrastructure to build and run, worth it
+once there's actual production traffic and a measured drift problem, not before.
 
 **Say this if asked "why not add semantic caching / model routing / MCP now":**
 "Same answer as the infra-scaling table above — I can name the standard fix for

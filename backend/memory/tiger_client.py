@@ -25,3 +25,24 @@ async def query_similar_chunks(repo: str, embedding: list[float], top_k: int = 5
             {"repo": repo, "emb": to_vector_literal(embedding), "k": top_k},
         )
         return [f"[{row.path}]\n{row.content}" for row in result]
+
+
+async def query_similar_chunk_symbols(repo: str, embedding: list[float], top_k: int = 5) -> list[str]:
+    """Same ranked search as query_similar_chunks, but returns chunk symbols
+    instead of content — used by the eval harness (backend/evaluation/) to
+    check *which* chunk was retrieved against a test set, not to render a
+    prompt."""
+    async with get_sessionmaker()() as session:
+        result = await session.execute(
+            text(
+                """
+                SELECT symbol
+                FROM code_chunks
+                WHERE repo = :repo
+                ORDER BY embedding <=> CAST(:emb AS vector)
+                LIMIT :k
+                """
+            ),
+            {"repo": repo, "emb": to_vector_literal(embedding), "k": top_k},
+        )
+        return [row.symbol for row in result]

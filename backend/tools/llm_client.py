@@ -137,8 +137,26 @@ class MockLLMClient(LLMClient):
     """
 
     async def complete_json(self, *, system: str, user: str, model: str) -> LLMResponse:
+        system_lower = system.lower()
+
+        if "faithfulness judge" in system_lower:
+            # Deterministic stand-in for "does the claim trace back to context":
+            # no retrieved context means nothing to be faithful to.
+            supported = "(no context retrieved)" not in user
+            return LLMResponse(
+                text=json.dumps({"supported": supported, "reasoning": "mock: context-presence heuristic"}),
+                tokens_in=0, tokens_out=0, cost_usd=0.0, model="mock",
+            )
+
+        if "relevance judge" in system_lower:
+            relevant = "UNRELATED_TO_DIFF" not in user
+            return LLMResponse(
+                text=json.dumps({"relevant": relevant, "reasoning": "mock: marker heuristic"}),
+                tokens_in=0, tokens_out=0, cost_usd=0.0, model="mock",
+            )
+
         findings = []
-        if "security" in system.lower() and ("execute(" in user or "f\"select" in user.lower()):
+        if "security" in system_lower and ("execute(" in user or "f\"select" in user.lower()):
             findings.append(
                 {
                     "severity": "CRITICAL",
