@@ -1,20 +1,22 @@
 import os
 
 # Tests must never run against the same database as a live demo/dev session —
-# the db_session fixture below drops all tables on teardown. Force a separate
-# "_test" database before backend.core.config.get_settings() is ever called
-# (it's lru_cached on first call, so this must happen at import time here).
-os.environ.setdefault(
-    "TIGER_DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5544/aipr_review_test",
-)
+# the db_session fixture below drops all tables on teardown, and a shell with
+# TIGER_DATABASE_URL exported (e.g. for local scripts/run_eval.py runs against
+# the real Tiger Cloud instance) previously leaked straight through: setdefault()
+# only guards the .env file, not an OS env var already in the process's
+# environment, and pydantic-settings prefers OS env vars over .env either way.
+# Force it unconditionally instead — nothing in this test suite should ever be
+# able to read a real database URL. Must happen before
+# backend.core.config.get_settings() is ever called (it's lru_cached on first
+# call, so this must happen at import time here).
+os.environ["TIGER_DATABASE_URL"] = "postgresql+asyncpg://postgres:postgres@localhost:5544/aipr_review_test"
 
-# Settings.env_file=".env" means a developer's real .env (pointed at live Tiger
-# Cloud / openai / anthropic / ollama) would otherwise leak into test runs.
-# OS env vars take precedence over the .env file in pydantic-settings, so this
-# pins the test suite back to the deterministic mock client regardless of what
-# LLM_PROVIDER a local .env happens to be set to.
-os.environ.setdefault("LLM_PROVIDER", "mock")
+# Same leak, same fix: a shell with LLM_PROVIDER=ollama (or any real provider)
+# exported previously bypassed this and made test_e2e_review.py's assertions
+# non-deterministic against a real model's output instead of MockLLMClient's
+# canned responses. Force it unconditionally.
+os.environ["LLM_PROVIDER"] = "mock"
 
 import pytest_asyncio
 from sqlalchemy import text
