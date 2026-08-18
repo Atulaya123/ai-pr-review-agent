@@ -23,8 +23,11 @@ class Settings(BaseSettings):
     # on free-tier hosting (not enough RAM for model weights).
     groq_api_key: str | None = None
     # default matches the free local path (Ollama + nomic-embed-text, 768 dims).
-    # Swap to "text-embedding-3-large" (256 dims, per the architecture doc) if
-    # running on OpenAI — code_chunks.embedding's column width must match.
+    # The deployed instance sets EMBEDDING_PROVIDER=openai + EMBEDDING_MODEL=
+    # text-embedding-3-small (Groq, its LLM provider, has no embeddings API) —
+    # embedder.py truncates OpenAI's native output to embedding_dims via the
+    # `dimensions` param, so this stays 768 and code_chunks.embedding never
+    # needs a schema change to switch providers.
     embedding_model: str = "nomic-embed-text"
     embedding_dims: int = 768
     embedding_provider: str = "ollama"  # "ollama" | "openai"

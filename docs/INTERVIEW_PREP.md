@@ -213,13 +213,20 @@ public: fork the repo, open a PR, and the pipeline runs for real. Free hosting
 doesn't have the RAM to run the local 14B model that produced the strongest
 local results, so the deployed instance swaps to Groq's free hosted API
 (`llama-3.3-70b-versatile`) — a one-line config change behind the same
-`LLMClient` interface, which is exactly the point of that abstraction. Two
+`LLMClient` interface, which is exactly the point of that abstraction. Three
 real constraints shaped the deployment: Render's free tier has no background-
 worker service type at all, so the API and the ARQ worker run as two
-supervised processes in one container instead of two separate services; and
-Groq has no embeddings API, so the deployed instance's RAG grounding falls
-back to diff-only reasoning — local Ollama runs are the only ones with full
-architecture-grounding. `LLM_PROVIDER` stays fully configurable either way.
+supervised processes in one container instead of two separate services;
+Groq has no embeddings API, so RAG grounding on the deployed instance runs
+through a *different* provider than the LLM — `EMBEDDING_PROVIDER=openai`
+(`text-embedding-3-small`), with `embedder.py` truncating OpenAI's native
+output to 768 dims via the `dimensions` param so `code_chunks.embedding`
+never needs a schema change to switch providers; and switching that provider
+requires re-running `scripts/ingest_docs.py` against the live Tiger DB so the
+stored chunk vectors and the query-time diff vectors live in the same
+embedding space — that's the part that's easy to get silently wrong, since a
+provider mismatch degrades retrieval quality instead of erroring loudly.
+`LLM_PROVIDER` and `EMBEDDING_PROVIDER` are both independently configurable.
 
 ---
 

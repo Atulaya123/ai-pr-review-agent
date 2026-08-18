@@ -25,9 +25,11 @@ trade-offs, with what was given up) · [`docs/INTERVIEW_PREP.md`](docs/INTERVIEW
 **Live and deployed.** The full pipeline (webhook → queue → 4-agent LangGraph fan-out →
 confidence-weighted HITL gate → posted review) runs on Render's free tier using Groq's free
 API (`llama-3.3-70b-versatile`) for reasoning — genuinely triggerable by anyone, not just a
-local demo. `LLM_PROVIDER` stays fully configurable: clone the repo and run `ollama` locally
-instead for zero external dependency (with full RAG grounding over the codebase's own
-architecture rules, which the deployed instance doesn't have — Groq has no embeddings API).
+local demo. RAG grounding runs on the deployed instance too: Groq has no embeddings API, so
+`EMBEDDING_PROVIDER=openai` (`text-embedding-3-small`, truncated to 768 dims to match
+`code_chunks.embedding`) covers just that one call — Groq still does all the LLM reasoning.
+`LLM_PROVIDER` and `EMBEDDING_PROVIDER` stay independently configurable: clone the repo and
+run `ollama` locally for a zero-external-dependency path instead.
 See `.genesis/PLAN.md` for remaining scope (M3 dashboard/economics, M4 fault-injection tests).
 
 ## Architecture at a glance
@@ -88,8 +90,11 @@ Full step-by-step in `docs/SETUP.md`. Summary:
    `scripts/migrations/2026-06-tiger-init.sql` against it. Its IP allowlist needs to permit
    whatever's connecting — your own IP for local dev, opened up entirely for a host with no
    static IP (most free tiers, including Render's)
-3. **LLM**: `ollama` (free, local, full RAG grounding) or `groq` (free, hosted — what the
-   deployed instance uses, no embeddings support though) or `openai`/`anthropic`
+3. **LLM**: `ollama` (free, local) or `groq` (free, hosted — what the deployed instance uses
+   for reasoning) or `openai`/`anthropic`
+4. **Embeddings** (separate from LLM choice — RAG grounding needs this too): `ollama` (free,
+   local, `nomic-embed-text`) or `openai` (`text-embedding-3-small` — what the deployed
+   instance uses, since Groq has no embeddings API of its own)
 
 Put local credentials in `.env` (gitignored) — never in source, never committed. Deployed
 credentials go in the hosting platform's own environment variable UI (see `render.yaml`).
@@ -97,9 +102,11 @@ credentials go in the hosting platform's own environment variable UI (see `rende
 ## Project layout
 
 See `.genesis/DONE.html` section 4 and `pr-review-agent.html` section 4.2 for the full
-module map. `backend/memory/` implements real retrieval (local Ollama embeddings + pgvector
-cosine search) against this project's own architecture rules, ingested via
-`scripts/ingest_docs.py` — not wired for the deployed instance (Groq has no embeddings API).
+module map. `backend/memory/` implements real retrieval (pgvector cosine search over
+`code_chunks`) against this project's own architecture rules, ingested via
+`scripts/ingest_docs.py`. Embeddings are provider-swappable independent of the LLM: local
+runs use Ollama (`nomic-embed-text`), the deployed instance uses OpenAI
+(`text-embedding-3-small`) since Groq — its LLM provider — has no embeddings API.
 
 ## Tests
 

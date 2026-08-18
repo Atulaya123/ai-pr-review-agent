@@ -19,6 +19,12 @@ services:
         value: groq
       - key: GROQ_API_KEY
         sync: false
+      - key: EMBEDDING_PROVIDER
+        value: openai
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_API_KEY
+        sync: false
       - key: GITHUB_APP_ID
         sync: false
       - key: GITHUB_WEBHOOK_SECRET

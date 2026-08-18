@@ -4,9 +4,12 @@
 -- Idempotent — safe to re-run.
 --
 -- Embedding width is 768 to match the free local path (Ollama + nomic-embed-text).
--- The architecture doc specs OpenAI text-embedding-3-large truncated to 256 —
--- if you switch EMBEDDING_PROVIDER=openai, change VECTOR(768) below to VECTOR(256)
--- to match (a live table's column would need ALTER COLUMN ... TYPE, not just this file).
+-- The deployed instance uses EMBEDDING_PROVIDER=openai (text-embedding-3-small)
+-- but embedder.py passes dimensions=768 to OpenAI's embeddings API, truncating
+-- its native output down to match this column — so VECTOR(768) is correct for
+-- both providers and no ALTER COLUMN is needed when switching between them.
+-- Switching providers still requires re-running scripts/ingest_docs.py so the
+-- stored vectors live in the same embedding space as the query-time vectors.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS vectorscale;
