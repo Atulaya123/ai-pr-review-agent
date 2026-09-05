@@ -482,3 +482,25 @@ actually happened while building this:
     it needed a live PR to surface instead of the offline eval harness, since
     `scripts/run_eval.py` defaults to `LLM_PROVIDER=mock` and would have
     stayed green.*
+
+13. **This app's own config field name collided with a third-party SDK's
+    native environment variable.** `Settings.langsmith_tracing` mapped to the
+    env var `LANGSMITH_TRACING` — which the LangSmith SDK itself also reads
+    directly (`langsmith/utils.py`'s `get_env_var`, checking the
+    `LANGSMITH_`/`LANGCHAIN_` namespaces), completely independent of this
+    app's own tracing-AND-key gate in `_langsmith_env_vars()`. Render setting
+    `LANGSMITH_TRACING=true` self-activated the SDK's tracing regardless of
+    whether `LANGSMITH_API_KEY` was ever actually populated (it wasn't), so
+    every single LLM call in production tried to report a trace with no key
+    and 401'd — spamming Render's logs on every request, for who knows how
+    long, without breaking the actual review pipeline (LangSmith failures are
+    just logged, not fatal). Found by reading production logs while
+    investigating something unrelated. Fixed by giving the app's own toggle a
+    distinct name (`AIPR_LANGSMITH_TRACING`, via a pydantic `validation_alias`)
+    that can't collide with anything the SDK checks natively — verified by
+    setting the old name and confirming it no longer flips the flag, not just
+    by renaming and assuming. *What this shows: naming a config field after
+    "the thing it configures" isn't safe once that thing is a third-party
+    library with its own environment-variable contract — the collision is
+    invisible until both sides are half-configured at once, which is exactly
+    the state a `sync: false` secret with no value ever produces.*
