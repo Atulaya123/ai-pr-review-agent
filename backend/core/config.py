@@ -22,15 +22,17 @@ class Settings(BaseSettings):
     # free hosted inference for the deployed instance — local Ollama can't run
     # on free-tier hosting (not enough RAM for model weights).
     groq_api_key: str | None = None
+    gemini_api_key: str | None = None
     # default matches the free local path (Ollama + nomic-embed-text, 768 dims).
-    # The deployed instance sets EMBEDDING_PROVIDER=openai + EMBEDDING_MODEL=
-    # text-embedding-3-small (Groq, its LLM provider, has no embeddings API) —
-    # embedder.py truncates OpenAI's native output to embedding_dims via the
-    # `dimensions` param, so this stays 768 and code_chunks.embedding never
-    # needs a schema change to switch providers.
+    # The deployed instance sets EMBEDDING_PROVIDER=gemini + EMBEDDING_MODEL=
+    # gemini-embedding-001 (Groq, its LLM provider, has no embeddings API, and
+    # Gemini's free tier needs no payment method, unlike OpenAI's) — embedder.py
+    # truncates the hosted providers' native output to embedding_dims via
+    # output_dimensionality (Gemini) / dimensions (OpenAI), so this stays 768
+    # and code_chunks.embedding never needs a schema change to switch providers.
     embedding_model: str = "nomic-embed-text"
     embedding_dims: int = 768
-    embedding_provider: str = "ollama"  # "ollama" | "openai"
+    embedding_provider: str = "ollama"  # "ollama" | "gemini" | "openai"
 
     # github app
     github_app_id: str | None = None

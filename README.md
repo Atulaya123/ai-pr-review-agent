@@ -26,10 +26,11 @@ trade-offs, with what was given up) · [`docs/INTERVIEW_PREP.md`](docs/INTERVIEW
 confidence-weighted HITL gate → posted review) runs on Render's free tier using Groq's free
 API (`llama-3.3-70b-versatile`) for reasoning — genuinely triggerable by anyone, not just a
 local demo. RAG grounding runs on the deployed instance too: Groq has no embeddings API, so
-`EMBEDDING_PROVIDER=openai` (`text-embedding-3-small`, truncated to 768 dims to match
-`code_chunks.embedding`) covers just that one call — Groq still does all the LLM reasoning.
-`LLM_PROVIDER` and `EMBEDDING_PROVIDER` stay independently configurable: clone the repo and
-run `ollama` locally for a zero-external-dependency path instead.
+`EMBEDDING_PROVIDER=gemini` (`gemini-embedding-001`, truncated to 768 dims to match
+`code_chunks.embedding`) covers just that one call, on Gemini's no-card free tier — Groq
+still does all the LLM reasoning. `LLM_PROVIDER` and `EMBEDDING_PROVIDER` stay independently
+configurable: clone the repo and run `ollama` locally for a zero-external-dependency path
+instead, or set `EMBEDDING_PROVIDER=openai` if you'd rather pay for OpenAI's embeddings.
 See `.genesis/PLAN.md` for remaining scope (M3 dashboard/economics, M4 fault-injection tests).
 
 ## Architecture at a glance
@@ -93,8 +94,9 @@ Full step-by-step in `docs/SETUP.md`. Summary:
 3. **LLM**: `ollama` (free, local) or `groq` (free, hosted — what the deployed instance uses
    for reasoning) or `openai`/`anthropic`
 4. **Embeddings** (separate from LLM choice — RAG grounding needs this too): `ollama` (free,
-   local, `nomic-embed-text`) or `openai` (`text-embedding-3-small` — what the deployed
-   instance uses, since Groq has no embeddings API of its own)
+   local, `nomic-embed-text`) or `gemini` (`gemini-embedding-001`, free tier, no card — what
+   the deployed instance uses, since Groq has no embeddings API of its own) or `openai`
+   (`text-embedding-3-small`, paid)
 
 Put local credentials in `.env` (gitignored) — never in source, never committed. Deployed
 credentials go in the hosting platform's own environment variable UI (see `render.yaml`).
@@ -105,8 +107,39 @@ See `.genesis/DONE.html` section 4 and `pr-review-agent.html` section 4.2 for th
 module map. `backend/memory/` implements real retrieval (pgvector cosine search over
 `code_chunks`) against this project's own architecture rules, ingested via
 `scripts/ingest_docs.py`. Embeddings are provider-swappable independent of the LLM: local
-runs use Ollama (`nomic-embed-text`), the deployed instance uses OpenAI
-(`text-embedding-3-small`) since Groq — its LLM provider — has no embeddings API.
+runs use Ollama (`nomic-embed-text`), the deployed instance uses Gemini
+(`gemini-embedding-001`, free tier) since Groq — its LLM provider — has no embeddings API.
+
+## Nightly knowledge-base refresh (Airflow)
+
+`scripts/ingest_docs.py` was a manual, one-shot script. `airflow/dags/knowledge_base_refresh.py`
+turns the same ingestion into a scheduled, retryable, observable pipeline over that same
+underlying code (it orchestrates the existing scripts/functions, it doesn't reimplement them):
+
+```
+fetch_repo_docs → parse_and_chunk → embed_batch → upsert_index → run_eval → gate
+```
+
+Runs `@daily` with `catchup=False` — the source is "current state of this repo's architecture
+docs," not a time-partitioned dataset, so there's no historical interval to backfill; re-running
+for a past date would just re-embed the same six invariants again.
+
+**Idempotency** is keyed on a content hash, not just on `(repo, path, chunk_index)`. The existing
+unique index already prevents duplicate *rows*; `scripts/migrations/2026-09-content-hash.sql`
+adds a generated `content_hash` column so `embed_batch` can skip calling the embeddings API
+entirely for chunks whose content hasn't changed since the last run — re-running the DAG twice
+in a row with no source changes costs zero embedding calls, not just zero duplicate writes.
+
+**The eval gate** runs the same `backend/evaluation/runner.py` functions `scripts/run_eval.py`
+uses, but only fails the DAG on retrieval regressions (`recall@3`, `MRR`) — those are pure
+vector-math over what this run just ingested, so a drop is a real signal. The generation metrics
+(LLM-as-judge faithfulness/relevance) are computed and logged every run too, but they run against
+a fixed adversarial fixture unrelated to today's ingested content, so gating the DAG on them would
+be gating on judge noise rather than anything this run actually touched.
+
+No Docker needed to run this locally — see [`airflow/README.md`](airflow/README.md) for the
+exact setup (a plain venv + `airflow standalone`), which was used to verify the DAG parses and
+executes under real Airflow 3.1 before this was written up here.
 
 ## Tests
 

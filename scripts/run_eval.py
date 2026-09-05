@@ -17,47 +17,29 @@ Then:
 
 import asyncio
 
-from backend.agents.base_agent import resolve_model_for_provider
 from backend.core.config import get_settings
-from backend.evaluation.dataset import GENERATION_TEST_SET, RETRIEVAL_TEST_SET
-from backend.evaluation.generation_metrics import pass_rate, score_faithfulness, score_relevance
-from backend.evaluation.retrieval_metrics import mean_reciprocal_rank, recall_at_k
-from backend.memory.embedder import embed_text
-from backend.memory.tiger_client import query_similar_chunk_symbols
-from backend.tools.llm_client import get_llm_client
+from backend.evaluation.runner import compute_generation_metrics, compute_retrieval_metrics
 
 
 async def run_retrieval_eval(settings) -> None:
     print("=== Retrieval metrics (Recall@3, MRR) ===")
-    mrr_inputs: list[tuple[list[str], set[str]]] = []
-    for case in RETRIEVAL_TEST_SET:
-        embedding = await embed_text(case.query, settings)
-        retrieved = await query_similar_chunk_symbols(case.repo, embedding, top_k=5)
-        recall = recall_at_k(retrieved, case.relevant_symbols, k=3)
-        mrr_inputs.append((retrieved, case.relevant_symbols))
-        top1 = retrieved[0] if retrieved else "(nothing retrieved — has ingest_docs run?)"
-        print(f"  recall@3={recall:.2f}  top1={top1:<40}  {case.query[:55]!r}")
-    print(f"  MRR: {mean_reciprocal_rank(mrr_inputs):.3f}\n")
+    metrics = await compute_retrieval_metrics(settings)
+    for case in metrics.cases:
+        top1 = case.retrieved[0] if case.retrieved else "(nothing retrieved — has ingest_docs run?)"
+        print(f"  recall@3={case.recall_at_3:.2f}  top1={top1:<40}  {case.query[:55]!r}")
+    print(f"  MRR: {metrics.mrr:.3f}\n")
 
 
 async def run_generation_eval(settings) -> None:
     print("=== Generation metrics (LLM-as-judge: Faithfulness, Relevance) ===")
-    llm = get_llm_client(settings)
-    model = resolve_model_for_provider(settings.llm_provider)
+    metrics = await compute_generation_metrics(settings)
+    for case in metrics.cases:
+        f_mark = "OK" if case.supported == case.expected_supported else "UNEXPECTED"
+        r_mark = "OK" if case.relevant == case.expected_relevant else "UNEXPECTED"
+        print(f"  [{case.name}] supported={case.supported} ({f_mark})  relevant={case.relevant} ({r_mark})")
 
-    faithfulness_verdicts: list[bool] = []
-    relevance_verdicts: list[bool] = []
-    for case in GENERATION_TEST_SET:
-        supported, f_reason = await score_faithfulness(case.finding, case.context, llm, model=model)
-        relevant, r_reason = await score_relevance(case.finding, case.diff_text, llm, model=model)
-        faithfulness_verdicts.append(supported)
-        relevance_verdicts.append(relevant)
-        f_mark = "OK" if supported == case.expect_supported else "UNEXPECTED"
-        r_mark = "OK" if relevant == case.expect_relevant else "UNEXPECTED"
-        print(f"  [{case.name}] supported={supported} ({f_mark})  relevant={relevant} ({r_mark})")
-
-    print(f"\n  Faithfulness rate: {pass_rate(faithfulness_verdicts):.2f}")
-    print(f"  Relevance rate:    {pass_rate(relevance_verdicts):.2f}")
+    print(f"\n  Faithfulness rate: {metrics.faithfulness_rate:.2f}")
+    print(f"  Relevance rate:    {metrics.relevance_rate:.2f}")
 
 
 async def main() -> None:

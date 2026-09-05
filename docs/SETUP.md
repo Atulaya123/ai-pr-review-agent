@@ -246,23 +246,26 @@ This runs the whole pipeline on Render's free tier, using Groq (Option D above)
 for the LLM instead of local Ollama — free hosting doesn't have the RAM to run
 local model weights, so the deployed instance needs a real hosted API. RAG
 retrieval (the architecture-grounding capability) is wired for the deployed
-instance too: Groq has no embeddings API, so `EMBEDDING_PROVIDER=openai`
-(`text-embedding-3-small`, truncated to 768 dims via the `dimensions` param in
-`embedder.py`) covers just the embedding call — Groq still handles all LLM
-reasoning. Local runs with Ollama still get full grounding through its own
-embeddings endpoint; the two providers are configured independently.
+instance too: Groq has no embeddings API, so `EMBEDDING_PROVIDER=gemini`
+(`gemini-embedding-001`, truncated to 768 dims via the `output_dimensionality`
+param in `embedder.py`) covers just the embedding call — Groq still handles
+all LLM reasoning. Gemini was picked over OpenAI specifically because its
+free tier needs no payment method at all (OpenAI's embeddings API requires a
+funded account, even though the actual usage cost here is a few cents).
+Local runs with Ollama still get full grounding through its own embeddings
+endpoint; all three providers are configured independently of each other.
 
-**Three new free/pay-as-you-go accounts needed: Render (hosting), Groq (LLM),
-and OpenAI (embeddings only — a few cents of usage for six short chunks), on
-top of the GitHub App and Tiger Cloud you already set up above.**
+**Four new free accounts needed: Render (hosting), Groq (LLM), Google AI
+Studio (`aistudio.google.com/apikey` — embeddings, genuinely free, no card),
+on top of the GitHub App and Tiger Cloud you already set up above.**
 
 Two operational steps that are easy to miss when switching the deployed
-instance's `EMBEDDING_PROVIDER`: (1) `OPENAI_API_KEY` has to be added as a
+instance's `EMBEDDING_PROVIDER`: (1) `GEMINI_API_KEY` has to be added as a
 secret in Render's environment variable UI (`render.yaml` marks it
 `sync: false`, so Render won't set a value for you); (2) the vectors already
 sitting in `code_chunks` on Tiger Cloud were computed with whatever provider
 ingested them — switching providers without re-running
-`PYTHONPATH=. python -m scripts.ingest_docs` (with `EMBEDDING_PROVIDER=openai`
+`PYTHONPATH=. python -m scripts.ingest_docs` (with `EMBEDDING_PROVIDER=gemini`
 set locally, pointed at the same `TIGER_DATABASE_URL`) leaves query-time
 vectors and stored vectors in different embedding spaces, which silently
 degrades retrieval rather than erroring.

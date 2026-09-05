@@ -218,10 +218,14 @@ real constraints shaped the deployment: Render's free tier has no background-
 worker service type at all, so the API and the ARQ worker run as two
 supervised processes in one container instead of two separate services;
 Groq has no embeddings API, so RAG grounding on the deployed instance runs
-through a *different* provider than the LLM — `EMBEDDING_PROVIDER=openai`
-(`text-embedding-3-small`), with `embedder.py` truncating OpenAI's native
-output to 768 dims via the `dimensions` param so `code_chunks.embedding`
-never needs a schema change to switch providers; and switching that provider
+through a *different* provider than the LLM — `EMBEDDING_PROVIDER=gemini`
+(`gemini-embedding-001`), with `embedder.py` truncating Gemini's native
+output to 768 dims via `output_dimensionality` so `code_chunks.embedding`
+never needs a schema change to switch providers. Gemini over OpenAI
+specifically because its free tier needs no payment method — OpenAI's
+embeddings branch is still implemented and works (`EMBEDDING_PROVIDER=openai`),
+it's just not what's deployed, since that one requires a funded account for
+what would otherwise be a few cents of usage. Switching either provider
 requires re-running `scripts/ingest_docs.py` against the live Tiger DB so the
 stored chunk vectors and the query-time diff vectors live in the same
 embedding space — that's the part that's easy to get silently wrong, since a

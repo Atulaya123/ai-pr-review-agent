@@ -20,10 +20,10 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: EMBEDDING_PROVIDER
-        value: openai
+        value: gemini
       - key: EMBEDDING_MODEL
-        value: text-embedding-3-small
-      - key: OPENAI_API_KEY
+        value: gemini-embedding-001
+      - key: GEMINI_API_KEY
         sync: false
       - key: GITHUB_APP_ID
         sync: false
