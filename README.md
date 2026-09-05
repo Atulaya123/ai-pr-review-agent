@@ -163,13 +163,13 @@ Live-tested this deliberately rather than assuming it works — two attempts at
 triggering `ESCALATED`
 ([#11](https://github.com/Atulaya123/ai-pr-review-agent/pull/11),
 [#12](https://github.com/Atulaya123/ai-pr-review-agent/pull/12)) with
-progressively more ambiguous/subjective code, and both still came back
-`REQUEST_CHANGES` at 90%+ confidence. The deployed model (Groq
-`openai/gpt-oss-120b`) doesn't seem to self-report low confidence even on
-genuinely debatable judgment calls — a real calibration finding, not a bug:
-`ESCALATED` may trigger rarely in practice at the default 0.75 threshold with
-this specific model, which is exactly the kind of thing `hitl_feedback`
-dispute-rate data (not gate design alone) should be used to tune.
+progressively more ambiguous/subjective code both came back `REQUEST_CHANGES`
+at 90%+ confidence — the old default threshold, 0.75, was so far below what
+the deployed model (Groq `openai/gpt-oss-120b`) actually self-reports (every
+finding across 4 PRs landed in 0.90-0.99) that `ESCALATED` was structurally
+unreachable. `HITL_CONFIDENCE_THRESHOLD` is now **0.93**, calibrated against
+that measured range rather than left as an untested constant — see decision
+#8 in `ARCHITECTURE_DECISIONS.md` for the full data and reasoning.
 
 ## Tests
 

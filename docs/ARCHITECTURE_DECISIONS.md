@@ -165,22 +165,18 @@ Concretely, it means:
 
 ---
 
-## 8. Confidence-weighted HITL gate: minimum, not average, and why 0.75
+## 8. Confidence-weighted HITL gate: minimum, not average, and calibrated against real data
 
 **Chosen:** `overall_confidence = min(f.confidence for f in findings)` — the
 aggregator's confidence is the *weakest* link, not the mean. Any single `CRITICAL`
-finding escalates regardless of confidence; below-threshold confidence (default
-0.75) routes to a human queue; otherwise the review posts automatically.
+finding escalates regardless of confidence; below-threshold confidence
+(0.93, see calibration below) routes to a human queue; otherwise the review
+posts automatically.
 
 **Why minimum, not average:** averaging lets three high-confidence findings mask
 one low-confidence one — exactly the "almost-right" failure mode this system is
 designed against. A senior reviewer's overall trust in a review is dominated by
 its shakiest claim, not the mean of all claims.
-
-**Why 0.75 as a default, not derived:** it's a starting point, deliberately
-conservative (per the "start with more human involvement than you think you need"
-principle) — meant to be tuned down as the system earns trust with real dispute-rate
-data from `hitl_feedback`, not treated as a fixed constant.
 
 **The human queue, fixed:** `HITLReview`/`enqueue_hitl_review` existed in the
 schema from early on but nothing ever called them — an `ESCALATED` outcome
@@ -193,16 +189,21 @@ everything awaiting a human, no separate UI. `enqueue_hitl_review` now also
 runs alongside it, for a durable DB audit trail independent of GitHub's own
 label/comment history.
 
-**A live calibration finding, not just a design note:** live-testing this gate
-against the deployed model (Groq `openai/gpt-oss-120b`) across several PRs —
-two with unambiguous violations, two deliberately ambiguous/subjective ones
-designed to invite hedging — every finding it raised at all came back at
-0.90+ confidence, never below the 0.75 threshold. This model doesn't seem to
-self-report low confidence even on genuinely debatable judgment calls, which
-means `ESCALATED` may trigger rarely in practice with this specific model —
-worth knowing before assuming the threshold is doing much work, and a real
-argument for tracking `hitl_feedback` dispute rates rather than trusting the
-gate's calibration by design alone.
+**0.75 → 0.93, calibrated against real findings, not re-guessed:** the
+original 0.75 default was a deliberately-conservative starting point, never
+validated against how the deployed model actually behaves. Live-testing it
+across four PRs against the deployed model (Groq `openai/gpt-oss-120b`) — two
+with unambiguous violations (#9, #10), two deliberately ambiguous/subjective
+ones designed to invite hedging (#11, #12) — produced 12 findings across all
+four specialists, every single one in the range 0.90-0.99. At 0.75, the gate
+was structurally incapable of ever escalating for this model: nothing it
+reports comes anywhere near that low. 0.93 sits strictly above the one
+low-confidence outlier actually observed (0.90, a hedged LOW-severity finding
+in #11) and strictly below the more typical 0.95-0.99 band, so it can catch a
+genuine hedge without escalating routine confident findings. This is a small
+sample from one model in one session, not a substitute for tracking real
+`hitl_feedback` dispute-rate data once that exists — but it's a measured
+correction to an untested constant, not a bigger guess replacing a smaller one.
 
 ---
 

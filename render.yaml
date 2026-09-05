@@ -32,7 +32,7 @@ services:
       - key: GITHUB_PRIVATE_KEY
         sync: false
       - key: HITL_CONFIDENCE_THRESHOLD
-        value: "0.75"
+        value: "0.93"
       - key: DAILY_BUDGET_USD
         value: "5.0"
       - key: AIPR_LANGSMITH_TRACING

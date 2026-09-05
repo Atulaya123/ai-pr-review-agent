@@ -44,7 +44,18 @@ class Settings(BaseSettings):
     github_private_key: str | None = None
 
     # hitl gate
-    hitl_confidence_threshold: float = 0.75
+    # Calibrated against 12 real findings across 4 live PRs (#9-#12) reviewed
+    # by the deployed model (Groq openai/gpt-oss-120b) — every self-reported
+    # confidence observed landed in [0.90, 0.99]. The original 0.75 default
+    # was so far below that floor it was effectively dead code: nothing this
+    # model reports would ever escalate. 0.93 sits strictly above the one
+    # low-confidence outlier actually observed (0.90, a hedged LOW-severity
+    # finding) and strictly below the more typical 0.95-0.99 band, so it can
+    # still catch a genuine hedge without escalating routine confident
+    # findings. Small sample, one model, one session — not a substitute for
+    # tuning against real hitl_feedback dispute-rate data once that exists,
+    # but a real improvement over an untested guess.
+    hitl_confidence_threshold: float = 0.93
 
     # economics
     daily_budget_usd: float = 5.0
