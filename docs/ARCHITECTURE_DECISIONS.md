@@ -205,6 +205,12 @@ sample from one model in one session, not a substitute for tracking real
 `hitl_feedback` dispute-rate data once that exists — but it's a measured
 correction to an untested constant, not a bigger guess replacing a smaller one.
 
+**Confirmed live, not just computed:** after deploying the new threshold,
+re-running #11's exact scenario (PR #13) actually produced `ESCALATED` —
+`needs-human-review` label applied, comment posted ("overall confidence
+0.70 is below this reviewer's threshold"), no formal review. The calibration
+math checked out and the live system did what the math predicted.
+
 ---
 
 ## 9. Testing strategy: mock LLM + an isolated test database

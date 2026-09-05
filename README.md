@@ -159,17 +159,22 @@ and applies a `needs-human-review` label, so the PR itself is the queue:
 `HITLReview` row is also written for a durable audit trail independent of
 GitHub's own history.
 
-Live-tested this deliberately rather than assuming it works — two attempts at
+Live-tested this deliberately rather than assuming it works. Two attempts at
 triggering `ESCALATED`
 ([#11](https://github.com/Atulaya123/ai-pr-review-agent/pull/11),
 [#12](https://github.com/Atulaya123/ai-pr-review-agent/pull/12)) with
 progressively more ambiguous/subjective code both came back `REQUEST_CHANGES`
 at 90%+ confidence — the old default threshold, 0.75, was so far below what
 the deployed model (Groq `openai/gpt-oss-120b`) actually self-reports (every
-finding across 4 PRs landed in 0.90-0.99) that `ESCALATED` was structurally
-unreachable. `HITL_CONFIDENCE_THRESHOLD` is now **0.93**, calibrated against
-that measured range rather than left as an untested constant — see decision
-#8 in `ARCHITECTURE_DECISIONS.md` for the full data and reasoning.
+finding across those 4 PRs landed in 0.90-0.99) that `ESCALATED` was
+structurally unreachable. `HITL_CONFIDENCE_THRESHOLD` is now **0.93**,
+calibrated against that measured range — see decision #8 in
+`ARCHITECTURE_DECISIONS.md` for the full data. Re-running #11's exact
+scenario after deploying the new threshold
+([#13](https://github.com/Atulaya123/ai-pr-review-agent/pull/13)) confirmed
+it actually works, not just on paper: `needs-human-review` label applied, and
+a "Needs human review — overall confidence 0.70" comment posted instead of a
+formal review.
 
 ## Tests
 
