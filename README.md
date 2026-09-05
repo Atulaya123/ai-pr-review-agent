@@ -2,7 +2,10 @@
 
 **Live and publicly triggerable: https://aipr-review-agent.onrender.com** — fork this repo,
 open a PR against it, and watch four AI specialists review it for real. No laptop required;
-see [example #5](https://github.com/Atulaya123/ai-pr-review-agent/pull/5) for a real run.
+see [example #5](https://github.com/Atulaya123/ai-pr-review-agent/pull/5) for a real run, or
+[example #9](https://github.com/Atulaya123/ai-pr-review-agent/pull/9) specifically for RAG
+grounding — the finding quotes `ARCHITECTURE.md`'s reliability invariant near verbatim, not
+generic advice, confirming retrieval over `code_chunks` is actually driving the review.
 
 A production-grade AI pull-request review agent: four specialist reasoners (security,
 quality, tests, docs) fan out over a diff in parallel via LangGraph, each grounded in
@@ -43,7 +46,7 @@ GitHub PR → FastAPI ingress (HMAC + idempotency) → Redis/ARQ queue → ARQ w
                             └─ docs agent      ─┘
   → agent_events (business-level audit/cost ledger) + pr_review_records/finding_records (truth)
     in Postgres/Tiger Cloud, plus optional LangSmith tracing (execution-level: per-node
-    latency/tokens/errors on the LangGraph run itself — LANGSMITH_TRACING=true)
+    latency/tokens/errors on the LangGraph run itself — AIPR_LANGSMITH_TRACING=true)
 ```
 
 ## Run the M1 demo (no credentials needed)

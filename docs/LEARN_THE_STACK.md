@@ -127,7 +127,7 @@ any) happened.
 
 **LangSmith:** a hosted tracing service, built by the same company as LangGraph, that
 LangGraph can report to automatically — turn it on with three environment variables
-(`LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`) and no code changes, and
+(`AIPR_LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`) and no code changes, and
 every graph run shows up as a tree in a web dashboard: the whole review as the root, the four
 specialists as parallel children, each one expandable down to the exact prompt sent and
 response received. This project's `backend/core/config.py` exports those variables into the

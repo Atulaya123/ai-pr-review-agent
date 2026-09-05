@@ -193,7 +193,7 @@ by a real command and its real output, not just green test output.
 business-level audit/cost ledger — queried by the app itself, retained
 indefinitely, one row per action. LangSmith is added on top as *execution*-level
 tracing — the LangGraph run's actual node graph, prompts, and responses, viewed
-by a human in a dashboard, off by default (`LANGSMITH_TRACING=false`).
+by a human in a dashboard, off by default (`AIPR_LANGSMITH_TRACING=false`).
 
 **Why not just pick one:** they answer different questions. `agent_events`
 answers "what did this review decide, and what did it cost" — the question the

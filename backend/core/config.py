@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,7 +54,14 @@ class Settings(BaseSettings):
     # observability — LLM-call/agent-execution tracing, complements agent_events
     # (which is the business-level audit/cost ledger; LangSmith is execution-level
     # tracing of the LangGraph run itself: per-node latency, tokens, errors).
-    langsmith_tracing: bool = False
+    # AIPR_LANGSMITH_TRACING, not LANGSMITH_TRACING: the LangSmith SDK itself
+    # reads LANGSMITH_TRACING/LANGCHAIN_TRACING_V2 directly from the real process
+    # environment (see langsmith/utils.py's get_env_var, namespaces=("LANGSMITH",
+    # "LANGCHAIN")) — using that exact name here meant Render setting
+    # LANGSMITH_TRACING=true self-activated the SDK's tracing even with no
+    # LANGSMITH_API_KEY ever populated, bypassing the tracing-AND-key gate in
+    # _langsmith_env_vars() below entirely and 401ing on every single LLM call.
+    langsmith_tracing: bool = Field(default=False, validation_alias="AIPR_LANGSMITH_TRACING")
     langsmith_api_key: str | None = None
     langsmith_project: str = "aipr-review-agent"
 

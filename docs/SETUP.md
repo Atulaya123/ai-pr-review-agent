@@ -146,10 +146,15 @@ ledger) rather than replacing it. Free tier, no card required.
    simplest for a portfolio project, or `90d` if you'd rather rotate periodically.
 2. Add to `.env`:
    ```
-   LANGSMITH_TRACING=true
+   AIPR_LANGSMITH_TRACING=true
    LANGSMITH_API_KEY=<your key>
    LANGSMITH_PROJECT=aipr-review-agent
    ```
+   Not `LANGSMITH_TRACING` — that name collides with a var the LangSmith SDK
+   reads natively, which self-activates tracing independent of this app's own
+   on/off + key gate. This bit the deployed instance in production once
+   already (every LLM call 401ing against LangSmith with no key ever set) —
+   see `docs/INTERVIEW_PREP.md`'s bugs-found section.
 3. Run any review (locally or via the deployed webhook) and check
    **smith.langchain.com** → your project → you'll see one trace per review,
    with the four specialists' nodes nested under it as parallel children.
