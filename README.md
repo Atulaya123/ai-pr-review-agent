@@ -24,7 +24,7 @@ trade-offs, with what was given up) · [`docs/INTERVIEW_PREP.md`](docs/INTERVIEW
 
 **Live and deployed.** The full pipeline (webhook → queue → 4-agent LangGraph fan-out →
 confidence-weighted HITL gate → posted review) runs on Render's free tier using Groq's free
-API (`llama-3.3-70b-versatile`) for reasoning — genuinely triggerable by anyone, not just a
+API (`openai/gpt-oss-120b`) for reasoning — genuinely triggerable by anyone, not just a
 local demo. RAG grounding runs on the deployed instance too: Groq has no embeddings API, so
 `EMBEDDING_PROVIDER=gemini` (`gemini-embedding-001`, truncated to 768 dims to match
 `code_chunks.embedding`) covers just that one call, on Gemini's no-card free tier — Groq

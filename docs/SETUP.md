@@ -127,8 +127,11 @@ Local Ollama can't run on free-tier cloud hosting (not enough RAM for model
 weights), so the deployed version needs a real hosted API instead.
 1. **https://console.groq.com/keys** → sign up → **Create API Key**.
 2. Copy it → `GROQ_API_KEY` in `.env`.
-3. Set `LLM_PROVIDER=groq` in `.env`. Free tier includes `llama-3.3-70b-versatile`
-   — a bigger model than the 14B run locally in testing.
+3. Set `LLM_PROVIDER=groq` in `.env`. Free tier includes `openai/gpt-oss-120b`
+   — a bigger model than the 14B run locally in testing. (Groq deprecated the
+   original `llama-3.3-70b-versatile` this project used on 2026-08-16 — this
+   has already bitten the deployed instance once in production, see
+   `docs/INTERVIEW_PREP.md`'s bugs-found section.)
 
 ---
 

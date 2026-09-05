@@ -19,7 +19,10 @@ _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
     "ollama": "qwen2.5:14b-instruct",
-    "groq": "llama-3.3-70b-versatile",
+    # Groq deprecated llama-3.3-70b-versatile 2026-08-16 (announced 2026-06-17);
+    # this is Groq's own recommended replacement, not an OpenAI-routed call —
+    # Groq just names some hosted models with an "openai/" prefix.
+    "groq": "openai/gpt-oss-120b",
     "mock": "mock",
 }
 

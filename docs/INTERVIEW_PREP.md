@@ -212,7 +212,7 @@ Yes — https://aipr-review-agent.onrender.com, on Render's free tier, fully
 public: fork the repo, open a PR, and the pipeline runs for real. Free hosting
 doesn't have the RAM to run the local 14B model that produced the strongest
 local results, so the deployed instance swaps to Groq's free hosted API
-(`llama-3.3-70b-versatile`) — a one-line config change behind the same
+(`openai/gpt-oss-120b`) — a one-line config change behind the same
 `LLMClient` interface, which is exactly the point of that abstraction. Three
 real constraints shaped the deployment: Render's free tier has no background-
 worker service type at all, so the API and the ARQ worker run as two
@@ -465,3 +465,20 @@ actually happened while building this:
     can hold onto state (or a background thread) longer than your test scope
     assumes, and the fix is to avoid triggering the real mechanism, not to
     clean up faster.*
+
+12. **An upstream provider deprecated the exact model this project depended
+    on, silently, in production.** Groq deprecated `llama-3.3-70b-versatile`
+    (announced 2026-06-17, shut off 2026-08-16) — discovered not by monitoring
+    but by coincidence, while opening an unrelated test PR to verify a RAG
+    change: every specialist's LLM call started failing with Groq's
+    OpenAI-compatible `invalid_request_error` / `model_not_found`, visible in
+    Render's logs. Fixed by migrating `_LLM_MODEL_BY_PROVIDER["groq"]` to
+    Groq's own recommended replacement, `openai/gpt-oss-120b` (a Groq-hosted
+    model despite the `openai/` name prefix — not a routing change to
+    OpenAI). *What this shows: a hardcoded model string is an external
+    dependency with its own deprecation lifecycle, not a fire-and-forget
+    constant — this is exactly the kind of failure `DAILY_BUDGET_USD`-style
+    cost tracking wouldn't catch (calls fail, they don't get expensive), and
+    it needed a live PR to surface instead of the offline eval harness, since
+    `scripts/run_eval.py` defaults to `LLM_PROVIDER=mock` and would have
+    stayed green.*
