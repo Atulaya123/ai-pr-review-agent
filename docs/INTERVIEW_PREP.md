@@ -243,7 +243,6 @@ actual trigger that would justify switching, not a vague "eventually we should."
 |---|---|---|
 | Slack notification called inline, isolated with try/except | Transactional outbox: write the review row + an outbox event in one Postgres transaction, a separate relay publishes to a broker (Kafka/SQS), Slack — and any future consumer — subscribes independently | More than one downstream consumer of "a review was posted." Right now there's exactly one (Slack), so decoupling it buys nothing yet — outbox+Kafka solves fan-out to *many* consumers, not the dual-write bug I actually hit, which the persist-then-isolate fix already closes |
 | Redis/ARQ as the job queue | Kafka, SQS, or another durable broker | Redis has no durability guarantee by default — a crash without persistence configured loses in-flight jobs, and there's no replay. Fine while losing a job means re-running a demo; a real risk once losing a job means losing a real review |
-| In-memory LangGraph checkpointer (`MemorySaver`) | Redis- or Postgres-backed checkpointer | A worker crash mid-review currently loses that run's progress silently — acceptable for a demo, not once a review is slow/expensive enough that re-running from scratch is a real cost |
 | Single ARQ worker process | Horizontally scaled worker pool | Queue depth growing faster than one worker drains it. The queue already decouples this, so scaling out is a deploy/config change, not a redesign |
 | Offline Agent Eval (`scripts/run_eval.py`), run by hand against a fixed test set | Production monitoring: sample 1-5% of live traffic, async evaluation off the request path, dashboards, threshold alerts, `hitl_feedback` disputes feeding back into the test set | A measured drift problem — the offline harness can't tell you retrieval quality degraded as the corpus grew, only production sampling over time can. `hitl_feedback` already captures the human-dispute signal that flywheel would consume; nothing reads it yet |
 
@@ -271,13 +270,13 @@ row below is exactly the kind of gap that only shows up this way.
 | LLM Gateway | `backend/tools/llm_client.py` | Provider-agnostic `LLMClient` ABC — Mock/OpenAI/Anthropic/Groq/Ollama behind one interface |
 | Multi-agent collaboration | `backend/agents/` + `backend/orchestrator/` | Four specialist reasoners (security, quality, tests, docs) fan out in parallel, one aggregator merges — this *is* the "Multi-Agent Collaboration" agentic pattern |
 | Stateful workflow / state management | `backend/orchestrator/graph.py`, `state.py` | LangGraph `StateGraph`, Pregel-style superstep execution, checkpointing |
-| Response validation gate | `backend/orchestrator/nodes.py` (aggregator, `min(confidence)`) | Confidence-weighted HITL escalation — validates the specialists' self-reported confidence, **not** groundedness against retrieved sources (that's a real gap, see below) |
+| Response validation gate | `backend/orchestrator/nodes.py` (aggregator, `min(confidence)`) | Confidence-weighted HITL escalation, checking self-reported confidence on the hot path — deliberately not groundedness-checked inline; see the Agent Eval row below for why that's a design choice, not a gap |
 | Resilience: retry, circuit breaking, timeouts | `backend/reliability/` (`retry.py`, `circuit_breaker.py`, `timeout.py`) | Exponential backoff + jitter, per-dependency circuit breaker, provider-specific timeout ceilings (90s for local Ollama vs 20s default) |
 | Graceful degradation | `context_retriever.py` | Retrieval failure is caught and swallowed — falls back to diff-only reasoning rather than sinking the review |
 | Structured output | `llm_client.py` (`response_format={"type": "json_object"}`) | JSON mode, not schema-constrained function calling |
 | Cost/audit observability | `agent_events` hypertable + optional LangSmith tracing | Per-action cost ledger (business-level) plus opt-in execution-level tracing — see decision #10 in `ARCHITECTURE_DECISIONS.md` |
 | Agent Eval: retrieval metrics | `backend/evaluation/retrieval_metrics.py` (pure) + `scripts/run_eval.py` (DB-backed) | Recall@k and MRR against a hand-built query→expected-chunk test set (`backend/evaluation/dataset.py`) — run via `python -m scripts.run_eval` after `python -m scripts.ingest_docs` |
-| Agent Eval: generation metrics | `backend/evaluation/generation_metrics.py` | Faithfulness (does a finding's rationale trace back to retrieved context?) and Relevance (does it actually address the diff?) via LLM-as-judge — this is the real fix for the groundedness gap the confidence gate doesn't cover, see below |
+| Agent Eval: generation metrics | `backend/evaluation/generation_metrics.py` | Faithfulness (does a finding's rationale trace back to retrieved context?) and Relevance (does it actually address the diff?) via LLM-as-judge — **deliberately offline, not an inline runtime gate.** Judges gate what gets deployed; the cheap confidence check gates what gets posted at runtime. Running a judge per finding on every live review would add real latency and cost for a signal that's computable asynchronously — that's a design choice, not something still to be wired in |
 
 **To actually see these numbers:** `docs/SETUP.md`'s "Running Agent Eval"
 section has the exact commands. Real numbers measured directly against this
@@ -509,3 +508,22 @@ actually happened while building this:
     library with its own environment-variable contract — the collision is
     invisible until both sides are half-configured at once, which is exactly
     the state a `sync: false` secret with no value ever produces.*
+
+14. **Two real dependencies wanted mutually exclusive versions of a third.**
+    Upgrading the LangGraph checkpointer to Redis, the obvious move was the
+    official `langgraph-checkpoint-redis` package. It requires `redis>=5.2.1`;
+    its own `redisvl` dependency (used for search-index features this project
+    doesn't even need) requires `redis>=6.3.0`. `arq` — already in this
+    project as the job queue — hard-pins `redis<6`. No version of `redis`
+    satisfies `arq` and `redisvl` at the same time, in the same virtualenv,
+    full stop. Found by actually installing both and hitting a real
+    `ModuleNotFoundError` when they collided, not by reading a changelog and
+    guessing. Fixed by hand-implementing LangGraph's `BaseCheckpointSaver`
+    directly against the plain `redis` client already compatible with `arq`
+    (`backend/orchestrator/redis_checkpointer.py`), skipping `redisvl`'s
+    search-index machinery entirely since checkpoint storage never needed it.
+    *What this shows: "just use the official package" isn't always available
+    — sometimes two dependencies you already have good reasons for are
+    provably incompatible, and the fix is understanding the interface well
+    enough to reimplement the slice you actually need, not reaching for a
+    workaround or downgrading something else and hoping.*

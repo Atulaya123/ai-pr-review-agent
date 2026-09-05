@@ -2,10 +2,12 @@
 
 **Live and publicly triggerable: https://aipr-review-agent.onrender.com** — fork this repo,
 open a PR against it, and watch four AI specialists review it for real. No laptop required;
-see [example #5](https://github.com/Atulaya123/ai-pr-review-agent/pull/5) for a real run, or
+see [example #5](https://github.com/Atulaya123/ai-pr-review-agent/pull/5) for a real run,
 [example #9](https://github.com/Atulaya123/ai-pr-review-agent/pull/9) specifically for RAG
 grounding — the finding quotes `ARCHITECTURE.md`'s reliability invariant near verbatim, not
-generic advice, confirming retrieval over `code_chunks` is actually driving the review.
+generic advice — or [example #10](https://github.com/Atulaya123/ai-pr-review-agent/pull/10)
+for the same grounding re-confirmed live after adding Redis-backed checkpointing and hybrid
+retrieval, against Render's actual managed Redis, not just a local one.
 
 A production-grade AI pull-request review agent: four specialist reasoners (security,
 quality, tests, docs) fan out over a diff in parallel via LangGraph, each grounded in
@@ -40,10 +42,11 @@ See `.genesis/PLAN.md` for remaining scope (M3 dashboard/economics, M4 fault-inj
 
 ```
 GitHub PR → FastAPI ingress (HMAC + idempotency) → Redis/ARQ queue → ARQ worker
-  → LangGraph orchestrator ─┬─ security agent  ─┐
-                            ├─ quality agent   ─┤→ aggregator (dedup, confidence, HITL gate) → GitHub review
-                            ├─ tests agent     ─┤
-                            └─ docs agent      ─┘
+  → LangGraph orchestrator (checkpoints every superstep to Redis — see redis_checkpointer.py)
+      ─┬─ security agent  ─┐
+       ├─ quality agent   ─┤→ aggregator (dedup, confidence, HITL gate) ─┬→ GitHub review (posted)
+       ├─ tests agent     ─┤                                            └→ GitHub comment + label
+       └─ docs agent      ─┘                                               (needs-human-review, if escalated)
   → agent_events (business-level audit/cost ledger) + pr_review_records/finding_records (truth)
     in Postgres/Tiger Cloud, plus optional LangSmith tracing (execution-level: per-node
     latency/tokens/errors on the LangGraph run itself — AIPR_LANGSMITH_TRACING=true)
@@ -62,7 +65,7 @@ PYTHONPATH=. python -m scripts.init_db
 PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini
 ```
 
-All 24 tests should pass, including `test_pipeline_flags_sql_injection_and_blocks` — the
+All 39 tests should pass, including `test_pipeline_flags_sql_injection_and_blocks` — the
 real end-to-end path: a fixture diff with an unparameterized SQL query goes through the
 actual LangGraph graph (mock LLM client, zero network calls) and comes back with a
 `CRITICAL` finding and a `CRITICAL_BLOCK` outcome.
@@ -145,10 +148,33 @@ No Docker needed to run this locally — see [`airflow/README.md`](airflow/READM
 exact setup (a plain venv + `airflow standalone`), which was used to verify the DAG parses and
 executes under real Airflow 3.1 before this was written up here.
 
+## Human-in-the-loop escalation
+
+Below-threshold confidence (`ReviewOutcome.ESCALATED`, see decision #8 in
+`ARCHITECTURE_DECISIONS.md`) doesn't post a review — the specialists weren't
+confident enough for that. Instead `GitHubClient.request_human_review()` posts
+a PR comment (explicitly framed as leads for a human, not this bot's verdict)
+and applies a `needs-human-review` label, so the PR itself is the queue:
+`is:pr label:needs-human-review` finds everything awaiting a human. A matching
+`HITLReview` row is also written for a durable audit trail independent of
+GitHub's own history.
+
+Live-tested this deliberately rather than assuming it works — two attempts at
+triggering `ESCALATED`
+([#11](https://github.com/Atulaya123/ai-pr-review-agent/pull/11),
+[#12](https://github.com/Atulaya123/ai-pr-review-agent/pull/12)) with
+progressively more ambiguous/subjective code, and both still came back
+`REQUEST_CHANGES` at 90%+ confidence. The deployed model (Groq
+`openai/gpt-oss-120b`) doesn't seem to self-report low confidence even on
+genuinely debatable judgment calls — a real calibration finding, not a bug:
+`ESCALATED` may trigger rarely in practice at the default 0.75 threshold with
+this specific model, which is exactly the kind of thing `hitl_feedback`
+dispute-rate data (not gate design alone) should be used to tune.
+
 ## Tests
 
 ```bash
-PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini   # 30 tests
+PYTHONPATH=. python -m pytest backend/tests/ -v -c backend/pytest.ini   # 39 tests
 PYTHONPATH=. mypy backend --ignore-missing-imports                      # clean
 ```
 

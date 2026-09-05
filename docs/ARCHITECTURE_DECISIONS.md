@@ -33,14 +33,27 @@ parallel from one `build_context` node and join at one `aggregate` node.
 
 **The seam that makes this reversible:** all orchestrator code depends on
 `backend/core/workflow_engine.py` (an abstract `run/resume/get_state` interface),
-never on LangGraph directly (`backend/orchestrator/langgraph_engine.py` is the only
-file that imports `langgraph`). If concurrent workflow volume ever demands Temporal,
-a `TemporalWorkflowEngine` implementing the same interface swaps in — one file
-changes, nothing else in the codebase does. This is the single most defensible
-architectural move in the project: **the expensive decision is deferred, not avoided.**
+never on LangGraph directly (only `backend/orchestrator/graph.py` and
+`langgraph_engine.py` import `langgraph`, both inside that one package). If
+concurrent workflow volume ever demands Temporal, a `TemporalWorkflowEngine`
+implementing the same interface swaps in — one file changes, nothing else in the
+codebase does. This is the single most defensible architectural move in the
+project: **the expensive decision is deferred, not avoided.**
 
-**Revisit when:** sustained concurrent reviews exceed ~50/minute, or Redis-backed
-checkpointing (see #7) proves insufficient against data loss on worker crashes.
+**Checkpointing (M2, done):** `backend/orchestrator/redis_checkpointer.py`
+implements LangGraph's `BaseCheckpointSaver` directly against Redis, not the
+official `langgraph-checkpoint-redis` package — that package's `redisvl`
+dependency requires `redis>=6.3`, but `arq` (decision #5) requires `redis<6`.
+No single `redis` version satisfies both in one virtualenv; this was verified
+by actually installing both and hitting a real `ModuleNotFoundError`, not
+assumed from a changelog. Verified against real Redis, not just unit-tested:
+a full review run produces one checkpoint per superstep (5 for the 4-specialist
+graph), and `get_state()` correctly reads the latest one back.
+
+**Revisit when:** sustained concurrent reviews exceed ~50/minute, or the
+hand-rolled checkpointer's lack of blob deduplication (it stores each
+checkpoint's full channel values inline, unlike `InMemorySaver`'s
+content-addressed blobs) becomes a real storage-volume problem.
 
 ---
 
@@ -168,6 +181,28 @@ its shakiest claim, not the mean of all claims.
 conservative (per the "start with more human involvement than you think you need"
 principle) — meant to be tuned down as the system earns trust with real dispute-rate
 data from `hitl_feedback`, not treated as a fixed constant.
+
+**The human queue, fixed:** `HITLReview`/`enqueue_hitl_review` existed in the
+schema from early on but nothing ever called them — an `ESCALATED` outcome
+silently did nothing, no GitHub post, no record. Fixed: `GitHubClient.
+request_human_review()` posts a PR comment (framed explicitly as leads for a
+human, not this bot's verdict — the confidence gate is exactly *why* it isn't
+confident enough to post authoritatively) and applies a `needs-human-review`
+label, so the PR itself is the queue — `is:pr label:needs-human-review` finds
+everything awaiting a human, no separate UI. `enqueue_hitl_review` now also
+runs alongside it, for a durable DB audit trail independent of GitHub's own
+label/comment history.
+
+**A live calibration finding, not just a design note:** live-testing this gate
+against the deployed model (Groq `openai/gpt-oss-120b`) across several PRs —
+two with unambiguous violations, two deliberately ambiguous/subjective ones
+designed to invite hedging — every finding it raised at all came back at
+0.90+ confidence, never below the 0.75 threshold. This model doesn't seem to
+self-report low confidence even on genuinely debatable judgment calls, which
+means `ESCALATED` may trigger rarely in practice with this specific model —
+worth knowing before assuming the threshold is doing much work, and a real
+argument for tracking `hitl_feedback` dispute rates rather than trusting the
+gate's calibration by design alone.
 
 ---
 
