@@ -267,7 +267,7 @@ row below is exactly the kind of gap that only shows up this way.
 
 | Pattern | Where | Note |
 |---|---|---|
-| RAG (single-source vector retrieval) | `backend/memory/` (`embedder.py`, `context_retriever.py`, `tiger_client.py`) | Top-k cosine similarity over `pgvector`/DiskANN, no relevance grading — see gap below |
+| RAG (hybrid retrieval) | `backend/memory/` (`embedder.py`, `context_retriever.py`, `tiger_client.py`) | Vector cosine similarity (`pgvector`/DiskANN) fused with full-text (`content_tsv`/GIN) via Reciprocal Rank Fusion — `hybrid_search_chunks()`; no relevance grading — see gap below |
 | LLM Gateway | `backend/tools/llm_client.py` | Provider-agnostic `LLMClient` ABC — Mock/OpenAI/Anthropic/Groq/Ollama behind one interface |
 | Multi-agent collaboration | `backend/agents/` + `backend/orchestrator/` | Four specialist reasoners (security, quality, tests, docs) fan out in parallel, one aggregator merges — this *is* the "Multi-Agent Collaboration" agentic pattern |
 | Stateful workflow / state management | `backend/orchestrator/graph.py`, `state.py` | LangGraph `StateGraph`, Pregel-style superstep execution, checkpointing |
@@ -280,11 +280,16 @@ row below is exactly the kind of gap that only shows up this way.
 | Agent Eval: generation metrics | `backend/evaluation/generation_metrics.py` | Faithfulness (does a finding's rationale trace back to retrieved context?) and Relevance (does it actually address the diff?) via LLM-as-judge — this is the real fix for the groundedness gap the confidence gate doesn't cover, see below |
 
 **To actually see these numbers:** `docs/SETUP.md`'s "Running Agent Eval"
-section has the exact commands and real sample output from this repo's own
-Tiger Cloud instance (Recall@3=1.00, MRR=0.889, Faithfulness=0.33,
-Relevance=0.67 on the deliberately mixed generation test set) — worth having
-those numbers memorized, since "what did you measure" is a natural follow-up
-to "I built an eval harness."
+section has the exact commands. Real numbers measured directly against this
+repo's own Tiger Cloud instance, re-run multiple times across changes rather
+than quoted once and left stale: Recall@3 has been 1.00 on every provider/
+retrieval-strategy combination tried; MRR went from 0.889 (Ollama, pure
+vector) to 1.000 (Gemini, pure vector, and again unchanged after adding the
+hybrid fusion lane) — a real comparison, not a cherry-picked run. Faithfulness/
+relevance on the deliberately-mixed generation test set land around 0.33 each,
+with some run-to-run variance since LLM-as-judge is itself a live LLM call,
+not a fixed lookup — worth being able to explain *why* it varies (a known
+LLM-as-judge property) rather than memorizing one exact decimal.
 
 **Gaps — real, not oversights, each with why it'd matter:**
 

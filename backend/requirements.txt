@@ -5,6 +5,13 @@ pydantic-settings>=2.6
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
 arq>=0.26
+# redis: pinned <6 to match arq's own constraint. backend/orchestrator/
+# redis_checkpointer.py imports redis.asyncio directly (a hand-rolled
+# LangGraph checkpointer — the official langgraph-checkpoint-redis package's
+# redisvl dependency needs redis>=6.3, which is incompatible with arq in the
+# same venv; see that module's docstring), so this used to be an implicit
+# transitive dependency via arq and is now a direct one too.
+redis[hiredis]<6,>=4.2.0
 langgraph>=0.2.45
 langsmith>=0.10.0
 httpx>=0.27

@@ -83,6 +83,114 @@ async def query_similar_chunks(repo: str, embedding: list[float], top_k: int = 5
         return [f"[{row.path}]\n{row.content}" for row in result]
 
 
+RRF_K = 60  # standard Reciprocal Rank Fusion damping constant (Cormack et al. 2009)
+
+
+async def hybrid_search_chunks(
+    repo: str, embedding: list[float], query_text: str, top_k: int = 5, *, lane_k: int = 20
+) -> list[str]:
+    """Combines the vector lane (cosine similarity, DiskANN) with the sparse
+    lane (content_tsv, GIN-indexed full-text) via Reciprocal Rank Fusion —
+    each chunk's score is the sum of 1/(RRF_K + rank) across whichever
+    lane(s) it appears in, so a chunk ranked highly in either lane surfaces,
+    not just chunks that win on cosine distance alone. This is what actually
+    exercises content_tsv/code_chunks_fts_idx (see the original 2026-06
+    migration) — before this, that column existed but nothing queried it.
+
+    lane_k controls how many candidates each lane contributes before fusion;
+    kept separate from top_k (the final result count) so fusion has more than
+    top_k candidates per lane to actually rank against each other.
+    """
+    async with get_sessionmaker()() as session:
+        vector_result = await session.execute(
+            text(
+                """
+                SELECT id, path, content
+                FROM code_chunks
+                WHERE repo = :repo
+                ORDER BY embedding <=> CAST(:emb AS vector)
+                LIMIT :k
+                """
+            ),
+            {"repo": repo, "emb": to_vector_literal(embedding), "k": lane_k},
+        )
+        vector_rows = list(vector_result)
+
+        fulltext_result = await session.execute(
+            text(
+                """
+                SELECT id, path, content
+                FROM code_chunks
+                WHERE repo = :repo AND content_tsv @@ websearch_to_tsquery('english', :query)
+                ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
+                LIMIT :k
+                """
+            ),
+            {"repo": repo, "query": query_text, "k": lane_k},
+        )
+        fulltext_rows = list(fulltext_result)
+
+    scores: dict[str, float] = {}
+    chunks: dict[str, tuple[str, str]] = {}
+    for lane_rows in (vector_rows, fulltext_rows):
+        for rank, row in enumerate(lane_rows, start=1):
+            key = str(row.id)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
+            chunks[key] = (row.path, row.content)
+
+    ranked_ids = sorted(scores, key=lambda k: scores[k], reverse=True)[:top_k]
+    return [f"[{chunks[cid][0]}]\n{chunks[cid][1]}" for cid in ranked_ids]
+
+
+async def hybrid_search_chunk_symbols(
+    repo: str, embedding: list[float], query_text: str, top_k: int = 5, *, lane_k: int = 20
+) -> list[str]:
+    """Same fusion as hybrid_search_chunks, but returns symbols instead of
+    content — used by the eval harness (backend/evaluation/runner.py) so
+    Recall@k/MRR actually measure what get_retrieved_context does at review
+    time, not a different (pure-vector) code path that would silently drift
+    from it."""
+    async with get_sessionmaker()() as session:
+        vector_result = await session.execute(
+            text(
+                """
+                SELECT id, symbol
+                FROM code_chunks
+                WHERE repo = :repo
+                ORDER BY embedding <=> CAST(:emb AS vector)
+                LIMIT :k
+                """
+            ),
+            {"repo": repo, "emb": to_vector_literal(embedding), "k": lane_k},
+        )
+        vector_rows = list(vector_result)
+
+        fulltext_result = await session.execute(
+            text(
+                """
+                SELECT id, symbol
+                FROM code_chunks
+                WHERE repo = :repo AND content_tsv @@ websearch_to_tsquery('english', :query)
+                ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
+                LIMIT :k
+                """
+            ),
+            {"repo": repo, "query": query_text, "k": lane_k},
+        )
+        fulltext_rows = list(fulltext_result)
+
+    scores: dict[str, float] = {}
+    symbols: dict[str, str] = {}
+    for lane_rows in (vector_rows, fulltext_rows):
+        for rank, row in enumerate(lane_rows, start=1):
+            key = str(row.id)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
+            symbols[key] = row.symbol
+
+    ranked_ids = sorted(scores, key=lambda k: scores[k], reverse=True)[:top_k]
+    return [symbols[cid] for cid in ranked_ids]
+
+
 async def query_similar_chunk_symbols(repo: str, embedding: list[float], top_k: int = 5) -> list[str]:
     """Same ranked search as query_similar_chunks, but returns chunk symbols
     instead of content — used by the eval harness (backend/evaluation/) to

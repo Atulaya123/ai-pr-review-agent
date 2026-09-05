@@ -18,7 +18,14 @@ os.environ["TIGER_DATABASE_URL"] = "postgresql+asyncpg://postgres:postgres@local
 # canned responses. Force it unconditionally.
 os.environ["LLM_PROVIDER"] = "mock"
 
+# Same leak, same fix, one more env var: test_e2e_review.py now runs the real
+# LangGraph graph through RedisCheckpointSaver (backend/orchestrator/
+# redis_checkpointer.py), which actually writes to REDIS_URL — a shell with
+# that pointed at a real/shared Redis would leak review checkpoints into it.
+os.environ["REDIS_URL"] = "redis://localhost:6480/0"
+
 import pytest_asyncio
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -43,6 +50,20 @@ async def _ensure_test_database_exists(test_db_url: str) -> None:
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _test_database_exists():
     await _ensure_test_database_exists(get_settings().tiger_database_url)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_test_checkpoints():
+    """RedisCheckpointSaver keys everything under an `aipr:` prefix — sweep
+    them after every test so review checkpoints don't accumulate in the dev
+    Redis across test runs, mirroring db_session's drop_all below for Postgres."""
+    yield
+    redis = Redis.from_url(get_settings().redis_url)
+    try:
+        async for key in redis.scan_iter(match="aipr:*"):
+            await redis.delete(key)
+    finally:
+        await redis.aclose()
 
 
 @pytest_asyncio.fixture

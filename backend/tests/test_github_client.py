@@ -4,7 +4,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from backend.core.config import Settings
-from backend.integrations.github_client import GitHubClient
+from backend.integrations.github_client import GitHubClient, _escalation_body
+from backend.models.enums import AgentType, Severity
+from backend.models.findings import Finding
 
 
 def _generate_test_pem() -> str:
@@ -77,3 +79,27 @@ def test_app_jwt_handles_crlf(tmp_path):
     token = GitHubClient(settings)._app_jwt()
     decoded = jwt.decode(token, options={"verify_signature": False})
     assert decoded["iss"] == "12345"
+
+
+def test_escalation_body_with_no_findings_still_flags_low_confidence():
+    body = _escalation_body(0.4, [])
+    assert "Needs human review" in body
+    assert "0.40" in body
+
+
+def test_escalation_body_lists_findings_as_leads_not_a_verdict():
+    finding = Finding(
+        agent_type=AgentType.SECURITY,
+        severity=Severity.LOW,
+        category="style",
+        summary="looks off",
+        file_path="app.py",
+        line_start=3,
+        line_end=3,
+        confidence=0.4,
+        rationale="r",
+    )
+    body = _escalation_body(0.4, [finding])
+    assert "app.py:3" in body
+    assert "looks off" in body
+    assert "not a final verdict" in body

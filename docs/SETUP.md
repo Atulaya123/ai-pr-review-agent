@@ -207,36 +207,42 @@ PYTHONPATH=. python -m scripts.ingest_docs   # only needed once, or after a DB r
 PYTHONPATH=. python -m scripts.run_eval
 ```
 
-Real output from this repo's Tiger Cloud instance + local Ollama embeddings:
+Real output from this repo's Tiger Cloud instance, current hybrid retrieval
+(vector + full-text fusion, `hybrid_search_chunk_symbols`) + Gemini embeddings:
 
 ```
 === Retrieval metrics (Recall@3, MRR) ===
-  recall@3=1.00  top1=workflow_engine_seam                      'Can backend/agents/ import directly from backend/job_qu'
+  recall@3=1.00  top1=modular_monolith_dependency_rule          'Can backend/agents/ import directly from backend/job_qu'
   recall@3=1.00  top1=reliability_layer_required                'Is it OK to call httpx directly with no timeout in a ne'
   recall@3=1.00  top1=workflow_engine_seam                      'Should orchestrator code import langgraph directly, or '
   recall@3=1.00  top1=llm_client_seam                           'Is it fine for a new module to call the OpenAI SDK dire'
   recall@3=1.00  top1=hitl_confidence_gate                      'Should the aggregator average confidence across finding'
   recall@3=1.00  top1=untrusted_content_boundary                'Is it safe to interpolate PR diff content directly into'
-  MRR: 0.889
+  MRR: 1.000
 
 === Generation metrics (LLM-as-judge: Faithfulness, Relevance) ===
   [grounded_finding] supported=True (OK)  relevant=True (OK)
-  [ungrounded_finding_no_context] supported=False (OK)  relevant=True (OK)
+  [ungrounded_finding_no_context] supported=False (OK)  relevant=False (UNEXPECTED)
   [hallucinated_finding] supported=False (OK)  relevant=False (OK)
 
   Faithfulness rate: 0.33
-  Relevance rate:    0.67
+  Relevance rate:    0.33
 ```
 
-Reading this: Recall@3 is 1.00 on every query — the right chunk always lands
-in the top 3 — but MRR (0.889, not 1.000) shows it isn't always rank 1, which
-is the more sensitive signal since `context_retriever.py` only ever uses
-`top_k=5` chunks, not just the top 1. The generation numbers aren't meant to
-look good — `GENERATION_TEST_SET` (`backend/evaluation/dataset.py`) is a
-deliberately mixed fixture (one grounded finding, one ungrounded, one
-hallucinated), so 0.33 faithfulness / 0.67 relevance is the harness correctly
-scoring a bad test set as bad, not a real quality number for the live
-pipeline. Run it against real findings pulled from `finding_records` to get
+Reading this: Recall@3 is 1.00 on every query and MRR is a perfect 1.000 —
+every query's top-ranked result is the correct chunk. That's specific to this
+small six-invariant corpus and this embedding model, not a general claim;
+re-running the same test set against local Ollama embeddings previously
+measured MRR=0.889 on the same database (still perfect recall, just not
+always rank 1) — a real, reproducible before/after, not a one-off. The
+generation numbers aren't meant to look good — `GENERATION_TEST_SET`
+(`backend/evaluation/dataset.py`) is a deliberately mixed fixture (one
+grounded finding, one ungrounded, one hallucinated), so ~0.33 on both is the
+harness correctly scoring a bad test set as bad, not a real quality number
+for the live pipeline. These two also drift slightly run-to-run (e.g.
+relevance has landed at both 0.33 and 0.67 across runs) since LLM-as-judge is
+itself a live LLM call, not a deterministic lookup — expected, not a bug.
+Run it against real findings pulled from `finding_records` to get
 that instead — not wired up yet, see the gap table below.
 
 Unit tests for the parts of this that don't need a live DB (the pure metric

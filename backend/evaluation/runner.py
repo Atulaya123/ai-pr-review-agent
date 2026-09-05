@@ -12,7 +12,7 @@ from backend.evaluation.dataset import GENERATION_TEST_SET, RETRIEVAL_TEST_SET
 from backend.evaluation.generation_metrics import pass_rate, score_faithfulness, score_relevance
 from backend.evaluation.retrieval_metrics import mean_reciprocal_rank, recall_at_k
 from backend.memory.embedder import embed_text
-from backend.memory.tiger_client import query_similar_chunk_symbols
+from backend.memory.tiger_client import hybrid_search_chunk_symbols
 from backend.tools.llm_client import get_llm_client
 
 
@@ -36,7 +36,7 @@ async def compute_retrieval_metrics(settings: Settings) -> RetrievalMetrics:
     mrr_inputs: list[tuple[list[str], set[str]]] = []
     for case in RETRIEVAL_TEST_SET:
         embedding = await embed_text(case.query, settings)
-        retrieved = await query_similar_chunk_symbols(case.repo, embedding, top_k=5)
+        retrieved = await hybrid_search_chunk_symbols(case.repo, embedding, case.query, top_k=5)
         recall = recall_at_k(retrieved, case.relevant_symbols, k=3)
         mrr_inputs.append((retrieved, case.relevant_symbols))
         cases.append(

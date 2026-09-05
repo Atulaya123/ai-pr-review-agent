@@ -16,7 +16,8 @@ _EVENT_BY_OUTCOME = {
     ReviewOutcome.APPROVED: "COMMENT",
     ReviewOutcome.REQUEST_CHANGES: "COMMENT",
     ReviewOutcome.CRITICAL_BLOCK: "REQUEST_CHANGES",
-    ReviewOutcome.ESCALATED: "COMMENT",  # escalated reviews shouldn't reach here; see hitl gate
+    ReviewOutcome.ESCALATED: "COMMENT",  # never actually used — ESCALATED goes through
+    # request_human_review() below, not post_review(); kept for completeness only.
 }
 
 
@@ -111,6 +112,71 @@ class GitHubClient:
                 return str(resp.json()["id"])
 
         return await with_timeout(retry_with_backoff(_call))
+
+    async def request_human_review(
+        self,
+        repo: str,
+        pr_number: int,
+        installation_id: int,
+        *,
+        overall_confidence: float,
+        findings: list[Finding],
+    ) -> str:
+        """The HITL gate's ESCALATED path: below-threshold confidence means
+        the specialists aren't sure enough for an autonomous REQUEST_CHANGES,
+        but silently dropping the review was the actual gap (HITLReview
+        existed in the schema, nothing ever consumed it — see
+        docs/INTERVIEW_PREP.md). The PR itself is the queue: a plain issue
+        comment (not a formal review — the findings aren't confident enough
+        to stand as this bot's authoritative verdict) plus a label, so a human
+        can find every review awaiting them with `is:pr label:needs-human-review`,
+        no separate UI needed.
+        """
+        token = await self._installation_token(installation_id)
+        body = _escalation_body(overall_confidence, findings)
+
+        async def _post_comment():
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/comments",
+                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                    json={"body": body},
+                )
+                resp.raise_for_status()
+                return str(resp.json()["id"])
+
+        comment_id = await with_timeout(retry_with_backoff(_post_comment))
+
+        async def _add_label():
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/labels",
+                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                    json={"labels": ["needs-human-review"]},
+                )
+                resp.raise_for_status()
+
+        await with_timeout(retry_with_backoff(_add_label))
+        return comment_id
+
+
+def _escalation_body(overall_confidence: float, findings: list[Finding]) -> str:
+    if not findings:
+        return (
+            "🤖 **Needs human review** — the automated reviewer's confidence "
+            f"({overall_confidence:.2f}) fell below the threshold for an autonomous "
+            "verdict, even with no findings to report. Nothing specific stood out, "
+            "but the low confidence itself is the signal worth a second look."
+        )
+    lines = [
+        f"🤖 **Needs human review** — overall confidence {overall_confidence:.2f} is below "
+        "this reviewer's threshold for an autonomous verdict. The findings below are what "
+        "it noticed, but treat them as leads for a human reviewer, not a final verdict:",
+        "",
+    ]
+    for f in findings:
+        lines.append(f"- **[{f.severity.value}] {f.category}** ({f.file_path}:{f.line_start}, confidence {f.confidence:.2f}): {f.summary}")
+    return "\n".join(lines)
 
 
 def _summary_body(findings: list[Finding], outcome: ReviewOutcome) -> str:

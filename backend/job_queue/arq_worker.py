@@ -7,7 +7,7 @@ from arq.connections import ArqRedis, RedisSettings
 
 from backend.core.config import get_settings
 from backend.core.workflow_engine import get_workflow_engine
-from backend.database.repository import save_review_result
+from backend.database.repository import enqueue_hitl_review, save_review_result
 from backend.database.session import get_sessionmaker
 from backend.integrations.diff_parser import get_valid_line_range
 from backend.integrations.github_client import GitHubClient
@@ -107,12 +107,33 @@ async def run_review_job(
         outcome=final_state["outcome"],
     )
 
-    if result.outcome != ReviewOutcome.ESCALATED and installation_id is not None:
+    if installation_id is not None:
         try:
-            await github.post_review(repo, pr_number, installation_id, result.findings, result.outcome)
+            if result.outcome == ReviewOutcome.ESCALATED:
+                # The HITL queue *is* the PR: a comment plus a label a human
+                # can filter on, not a separate table nobody reads (see
+                # request_human_review's docstring for why this replaced a
+                # silent no-op here).
+                await github.request_human_review(
+                    repo,
+                    pr_number,
+                    installation_id,
+                    overall_confidence=result.overall_confidence,
+                    findings=result.findings,
+                )
+            else:
+                await github.post_review(repo, pr_number, installation_id, result.findings, result.outcome)
             result.posted = True
         except Exception:
             logger.exception("failed to post review for %s#%s", repo, pr_number)
+
+    if result.outcome == ReviewOutcome.ESCALATED:
+        async with get_sessionmaker()() as session:
+            await enqueue_hitl_review(
+                session,
+                request.review_id,
+                reason=f"overall_confidence {result.overall_confidence:.2f} below threshold",
+            )
 
     async with get_sessionmaker()() as session:
         await save_review_result(session, repo, pr_number, head_sha, result)

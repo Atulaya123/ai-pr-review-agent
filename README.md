@@ -107,8 +107,9 @@ credentials go in the hosting platform's own environment variable UI (see `rende
 ## Project layout
 
 See `.genesis/DONE.html` section 4 and `pr-review-agent.html` section 4.2 for the full
-module map. `backend/memory/` implements real retrieval (pgvector cosine search over
-`code_chunks`) against this project's own architecture rules, ingested via
+module map. `backend/memory/` implements real hybrid retrieval (pgvector cosine
+similarity fused with Postgres full-text search over `code_chunks.content_tsv`, via
+Reciprocal Rank Fusion) against this project's own architecture rules, ingested via
 `scripts/ingest_docs.py`. Embeddings are provider-swappable independent of the LLM: local
 runs use Ollama (`nomic-embed-text`), the deployed instance uses Gemini
 (`gemini-embedding-001`, free tier) since Groq — its LLM provider — has no embeddings API.
