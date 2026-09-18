@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 
 from backend.core.workflow_engine import get_workflow_engine
-from backend.database.repository import get_review, save_review_result
+from backend.database.repository import get_posted_review, get_review, save_review_result
 from backend.models.enums import ReviewOutcome, Severity
 from backend.models.review import ReviewRequest, ReviewResult
 from backend.tests.fixtures.vulnerable_diff import CLEAN_DIFF_FILES, VULNERABLE_DIFF_FILES
@@ -62,3 +62,22 @@ async def test_review_result_persists_and_is_readable(db_session):
     assert fetched is not None
     assert fetched.repo == "acme/demo"
     assert fetched.outcome == "approved"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_get_posted_review_finds_only_matching_posted_commit(db_session):
+    """The idempotency check run_review_job relies on: a retry after a
+    successful GitHub post must find that prior record, but a not-yet-posted
+    record or a different commit on the same PR must not match."""
+    posted = ReviewResult(review_id=uuid4(), findings=[], overall_confidence=1.0, outcome=ReviewOutcome.APPROVED, posted=True)
+    await save_review_result(db_session, "acme/demo", 4, "sha-posted", posted)
+
+    unposted = ReviewResult(review_id=uuid4(), findings=[], overall_confidence=1.0, outcome=ReviewOutcome.APPROVED, posted=False)
+    await save_review_result(db_session, "acme/demo", 4, "sha-unposted", unposted)
+
+    found = await get_posted_review(db_session, "acme/demo", 4, "sha-posted")
+    assert found is not None
+    assert found.id == posted.review_id
+
+    assert await get_posted_review(db_session, "acme/demo", 4, "sha-unposted") is None
+    assert await get_posted_review(db_session, "acme/demo", 4, "sha-never-seen") is None

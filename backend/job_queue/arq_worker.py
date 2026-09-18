@@ -7,7 +7,7 @@ from arq.connections import ArqRedis, RedisSettings
 
 from backend.core.config import get_settings
 from backend.core.workflow_engine import get_workflow_engine
-from backend.database.repository import enqueue_hitl_review, save_review_result
+from backend.database.repository import enqueue_hitl_review, get_posted_review, save_review_result
 from backend.database.session import get_sessionmaker
 from backend.integrations.diff_parser import get_valid_line_range
 from backend.integrations.github_client import GitHubClient
@@ -74,6 +74,19 @@ async def run_review_job(
     ctx["github_client"] / ctx["workflow_engine"] are injected in on_startup so
     tests can substitute fakes without monkeypatching module globals.
     """
+    async with get_sessionmaker()() as session:
+        already_posted = await get_posted_review(session, repo, pr_number, head_sha)
+    if already_posted is not None:
+        # ARQ retries this whole job on any exception, including one thrown
+        # after a successful GitHub post (see docs/INTERVIEW_PREP.md bug #6) —
+        # without this guard, a retry re-runs the LLM pipeline and re-posts a
+        # duplicate review/comment for a commit already handled.
+        logger.info(
+            "review already posted for %s#%s @ %s (review_id=%s) — skipping duplicate run",
+            repo, pr_number, head_sha, already_posted.id,
+        )
+        return str(already_posted.id)
+
     github: GitHubClient = ctx.get("github_client") or GitHubClient()
     engine = ctx.get("workflow_engine") or get_workflow_engine()
 

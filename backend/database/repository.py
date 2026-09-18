@@ -64,3 +64,24 @@ async def enqueue_hitl_review(session: AsyncSession, review_id: UUID, reason: st
 async def get_review(session: AsyncSession, review_id: UUID) -> PRReviewRecord | None:
     stmt = select(PRReviewRecord).where(PRReviewRecord.id == review_id)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_posted_review(session: AsyncSession, repo: str, pr_number: int, head_sha: str) -> PRReviewRecord | None:
+    """Idempotency check for run_review_job: has this exact commit already been
+    posted to GitHub? ARQ retries the whole job on any exception, including one
+    thrown after a successful GitHub post — without this check, a retry would
+    re-post a duplicate review/comment with nothing to stop it. No unique
+    constraint backs (repo, pr_number, head_sha), so order by recency rather
+    than assume at most one row.
+    """
+    stmt = (
+        select(PRReviewRecord)
+        .where(
+            PRReviewRecord.repo == repo,
+            PRReviewRecord.pr_number == pr_number,
+            PRReviewRecord.head_sha == head_sha,
+            PRReviewRecord.posted.is_(True),
+        )
+        .order_by(PRReviewRecord.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().first()
