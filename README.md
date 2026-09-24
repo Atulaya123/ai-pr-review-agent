@@ -176,6 +176,19 @@ it actually works, not just on paper: `needs-human-review` label applied, and
 a "Needs human review — overall confidence 0.70" comment posted instead of a
 formal review.
 
+## MCP server (Phase 1)
+
+`backend/mcp_server/` exposes this project's own retrieval and findings-lookup as MCP
+tools over Streamable HTTP, mounted at `/mcp` on the same FastAPI app — not a separate
+process, since Render's free tier has no background-worker service type. Two read-only
+tools ship: `retrieve_context(repo, query, top_k)` (the same hybrid RRF retrieval used
+at review time) and `get_findings(repo, pr_number)` (a plain DB read). Gated by
+`MCP_SHARED_SECRET`; unset means `/mcp` isn't mounted at all, not left open —
+`retrieve_context` already costs a real embedding call and `daily_budget_usd` still
+isn't enforced. `review_diff` (the expensive tool, full 4-specialist fan-out) is
+deliberately not exposed yet — Phase 2 gates it behind OAuth 2.1 + PKCE + audience-bound
+tokens validated against GitHub's own authorization server.
+
 ## Tests
 
 ```bash
