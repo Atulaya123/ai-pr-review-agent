@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 
 from backend.core.workflow_engine import get_workflow_engine
-from backend.database.repository import get_posted_review, get_review, save_review_result
+from backend.database.repository import get_latest_review, get_posted_review, get_review, save_review_result
 from backend.models.enums import ReviewOutcome, Severity
 from backend.models.review import ReviewRequest, ReviewResult
 from backend.tests.fixtures.vulnerable_diff import CLEAN_DIFF_FILES, VULNERABLE_DIFF_FILES
@@ -81,3 +81,21 @@ async def test_get_posted_review_finds_only_matching_posted_commit(db_session):
 
     assert await get_posted_review(db_session, "acme/demo", 4, "sha-unposted") is None
     assert await get_posted_review(db_session, "acme/demo", 4, "sha-never-seen") is None
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_get_latest_review_ignores_posted_status_and_picks_most_recent(db_session):
+    """Backs the MCP get_findings tool: unlike get_posted_review, this must
+    return an escalated-but-not-posted review too — and the newest one for a
+    PR that's been reviewed more than once."""
+    older = ReviewResult(review_id=uuid4(), findings=[], overall_confidence=0.7, outcome=ReviewOutcome.ESCALATED, posted=False)
+    await save_review_result(db_session, "acme/demo", 5, "sha-old", older)
+
+    newer = ReviewResult(review_id=uuid4(), findings=[], overall_confidence=0.98, outcome=ReviewOutcome.APPROVED, posted=True)
+    await save_review_result(db_session, "acme/demo", 5, "sha-new", newer)
+
+    found = await get_latest_review(db_session, "acme/demo", 5)
+    assert found is not None
+    assert found.id == newer.review_id
+
+    assert await get_latest_review(db_session, "acme/demo", 999999) is None

@@ -85,3 +85,18 @@ async def get_posted_review(session: AsyncSession, repo: str, pr_number: int, he
         .order_by(PRReviewRecord.created_at.desc())
     )
     return (await session.execute(stmt)).scalars().first()
+
+
+async def get_latest_review(session: AsyncSession, repo: str, pr_number: int) -> PRReviewRecord | None:
+    """Most recent review for a repo+PR, any posted status — backs the MCP
+    get_findings tool. Unlike get_posted_review, doesn't filter on
+    posted=True: a caller asking "what did we find on this PR" wants the
+    latest verdict even if it was escalated to a human rather than
+    auto-posted.
+    """
+    stmt = (
+        select(PRReviewRecord)
+        .where(PRReviewRecord.repo == repo, PRReviewRecord.pr_number == pr_number)
+        .order_by(PRReviewRecord.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().first()
