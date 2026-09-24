@@ -8,6 +8,14 @@ grounding — the finding quotes `ARCHITECTURE.md`'s reliability invariant near 
 generic advice — or [example #10](https://github.com/Atulaya123/ai-pr-review-agent/pull/10)
 for the same grounding re-confirmed live after adding Redis-backed checkpointing and hybrid
 retrieval, against Render's actual managed Redis, not just a local one.
+[Example #14](https://github.com/Atulaya123/ai-pr-review-agent/pull/14) added an MCP server
+(merged, live in this repo) but its own review is the one that found Groq's free-tier 8000
+tokens/minute ceiling — a real production limit, not a code bug, documented in
+`docs/INTERVIEW_PREP.md`'s bug list. [Example #15](https://github.com/Atulaya123/ai-pr-review-agent/pull/15),
+a deliberately small follow-up PR, reproduced the confidence-gate hallucination behavior on
+demand: a finding citing a file that doesn't contain the symbol it describes, escalated to a
+human at 0.78 confidence instead of posted — the gate calibrated in #13 catching a second,
+independent instance of the same failure shape.
 
 A production-grade AI pull-request review agent: four specialist reasoners (security,
 quality, tests, docs) fan out over a diff in parallel via LangGraph, each grounded in

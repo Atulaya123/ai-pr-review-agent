@@ -527,3 +527,48 @@ actually happened while building this:
     provably incompatible, and the fix is understanding the interface well
     enough to reimplement the slice you actually need, not reaching for a
     workaround or downgrading something else and hoping.*
+
+15. **A free-tier token-per-minute ceiling killed a review outright — a
+    production limit, not a code bug.** Merging
+    [PR #14](https://github.com/Atulaya123/ai-pr-review-agent/pull/14) (the
+    MCP server), its own review never completed. Groq's `on_demand` free
+    tier caps `openai/gpt-oss-120b` at 8000 tokens/minute total, and the
+    security specialist's single request for that PR's 12-file, 472-line
+    diff needed 8,554 tokens — over the entire per-minute budget before any
+    retry could help. `retry_with_backoff` retried 3 times against an
+    identically-sized request and failed identically every time (a 413
+    "request too large," not a transient 429 backoff actually helps with),
+    and the exception propagated straight through LangGraph's
+    `_panic_or_proceed` and killed the whole graph run — nothing reached the
+    post-or-save step, so the webhook was accepted but the review vanished
+    with zero trace in `pr_review_records`. Confirmed by reading the actual
+    Render worker logs, not inferred from symptoms. *What this shows: a rate
+    limit is a production failure mode you hit, not one you read about — and
+    it exposed that this project's "per-node isolation" claim only covers
+    hanging (the timeout layer), not a hard failure; a fatal exception in
+    one specialist currently sinks the entire review, not just that
+    specialist's findings. Not fixed yet — the standard fix (chunk large
+    diffs, or route large reviews differently) is named, not built.*
+
+16. **The docstring hallucination reproduced on demand, on a fresh PR, with
+    a new twist.** A deliberately small follow-up
+    ([PR #15](https://github.com/Atulaya123/ai-pr-review-agent/pull/15), kept
+    small specifically to stay under bug #15's token ceiling) got reviewed
+    cleanly and produced one finding: a MEDIUM "may lack docstrings" claim
+    against `retrieve_context`/`get_findings`, citing
+    `backend/mcp_server/__init__.py:1`. Checked directly:
+    `backend/mcp_server/__init__.py` is a zero-line empty file, and neither
+    function is even defined there — both live in `server.py`, each with a
+    real docstring. Same failure shape as bug #5 (a hallucinated
+    documentation claim), a different specific: hedged at 0.78 confidence
+    instead of maxed at 1.00, and a location hallucination on top of a
+    content one — the model asserted a file path that doesn't contain the
+    symbol it's describing. The confidence gate did exactly its job:
+    `ESCALATED` at 0.78, routed to `needs-human-review`, never auto-posted.
+    *What this shows: a second, independent instance of the same failure
+    shape, not one bad roll — a stronger argument for `min()`-not-average
+    than a single incident, and it points at a concrete, mechanically
+    checkable next fix: does the cited file exist, does the named symbol
+    appear in it — deterministic, no LLM required, catchable before posting
+    instead of relying on the confidence gate to catch it after the fact.
+    Not built yet.*

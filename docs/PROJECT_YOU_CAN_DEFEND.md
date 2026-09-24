@@ -49,9 +49,23 @@ strategies.
 **Real failure to have ready:** the docs specialist once flagged a function as
 "lacks a docstring" — it had one, visibly, in the diff — and reported that claim at
 confidence **1.00**, the maximum, while correct findings in the same review sat at
-0.85–0.95. That single incident is the actual argument for `min()` over average
+0.85–0.95. That incident is the actual argument for `min()` over average
 (Q2.3) — a wrong finding can outscore a correct one, so no single self-reported
 number can be trusted at face value.
+
+**A second, independent instance, not a rehash — worth having as the fresher one.**
+On [PR #15](https://github.com/Atulaya123/ai-pr-review-agent/pull/15), a
+deliberately tiny follow-up PR, the exact same failure shape reproduced on demand:
+a finding claiming `retrieve_context`/`get_findings` "may lack docstrings," citing
+`backend/mcp_server/__init__.py:1` — a file that's zero lines long and doesn't even
+contain those functions (both live in `server.py`, each with a real docstring).
+Different specifics this time: hedged at **0.78**, not maxed at 1.00, and a
+*location* hallucination stacked on a content one, not just content. What matters
+more than the finding itself: the gate calibrated in PR #13 did exactly its job —
+`ESCALATED` at 0.78, routed to a human, never auto-posted. Two independent
+incidents with the same shape is a materially stronger claim than one — it's
+evidence the failure mode is structural, not a single bad roll, which is exactly
+what justifies a structural fix (`min()`) rather than a one-off prompt patch.
 
 ---
 
@@ -329,7 +343,9 @@ scale.
 1. **Chose `min()` over average** for the aggregator's overall confidence, after a
    hallucinated finding scored **1.00** confidence in the same review where correct
    findings sat at 0.85–0.95 — averaging would have let that one wrong claim hide
-   inside three good ones.
+   inside three good ones. Confirmed a second time, independently, on PR #15: a
+   different hallucination (wrong-file citation, hedged at 0.78) still got caught
+   and escalated rather than posted — two incidents with the same shape, not one.
 
 2. **Rejected the official `langgraph-checkpoint-redis` package** for a hand-rolled
    `BaseCheckpointSaver` against the plain `redis` client, after hitting a real
