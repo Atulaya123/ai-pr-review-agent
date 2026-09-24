@@ -62,6 +62,27 @@ class Settings(BaseSettings):
 
     webhook_max_body_bytes: int = 2_000_000
 
+    # mcp — Phase 1 auth only (shared secret in front of /mcp). Unset means
+    # "don't mount /mcp at all" (see backend/mcp_server/server.py) — fails
+    # closed rather than exposing tools with no auth. review_diff (Phase 2,
+    # not built yet) triggers real LLM cost with daily_budget_usd still
+    # unenforced, so this can never default to open.
+    mcp_shared_secret: str | None = None
+    # The mcp SDK enables DNS-rebinding Host-header protection by default
+    # with an empty allowed_hosts list, which — confirmed against a real
+    # running server, not assumed — rejects every single request with a 421
+    # regardless of who's asking, including the real deployed hostname. A
+    # comma-separated string, not a list, so it can be set as a plain env
+    # var in Render's UI without needing JSON encoding. Render's deployed
+    # value must include the real hostname (e.g. aipr-review-agent.onrender.com,
+    # no port — Render terminates TLS in front of the app) or every
+    # production MCP request 421s.
+    mcp_allowed_hosts: str = "localhost:8000,127.0.0.1:8000"
+
+    @property
+    def mcp_allowed_hosts_list(self) -> list[str]:
+        return [h.strip() for h in self.mcp_allowed_hosts.split(",") if h.strip()]
+
     # observability — LLM-call/agent-execution tracing, complements agent_events
     # (which is the business-level audit/cost ledger; LangSmith is execution-level
     # tracing of the LangGraph run itself: per-node latency, tokens, errors).

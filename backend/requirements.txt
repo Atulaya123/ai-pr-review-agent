@@ -14,6 +14,11 @@ arq>=0.26
 redis[hiredis]<6,>=4.2.0
 langgraph>=0.2.45
 langsmith>=0.10.0
+# Streamable HTTP MCP server, mounted onto the existing FastAPI app (backend/
+# mcp_server/) rather than run as a separate process — verified clean against
+# every other pin here (pip install + pip check) on both the local dev
+# interpreter and a throwaway venv matching Render's actual PYTHON_VERSION.
+mcp>=2.2.0
 httpx>=0.27
 pyjwt[crypto]>=2.9
 openai>=1.54

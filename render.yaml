@@ -33,6 +33,13 @@ services:
         sync: false
       - key: HITL_CONFIDENCE_THRESHOLD
         value: "0.93"
+      - key: MCP_SHARED_SECRET
+        sync: false
+      # Not a secret — the mcp SDK's Host-header allowlist. Must include the
+      # real deployed hostname or every production /mcp request 421s; see
+      # Settings.mcp_allowed_hosts.
+      - key: MCP_ALLOWED_HOSTS
+        value: "aipr-review-agent.onrender.com"
       - key: DAILY_BUDGET_USD
         value: "5.0"
       - key: AIPR_LANGSMITH_TRACING
