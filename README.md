@@ -125,6 +125,10 @@ Reciprocal Rank Fusion) against this project's own architecture rules, ingested 
 runs use Ollama (`nomic-embed-text`), the deployed instance uses Gemini
 (`gemini-embedding-001`, free tier) since Groq — its LLM provider — has no embeddings API.
 
+Runtime retrieval logs report vector, full-text, overlap, and fused result counts per query.
+An empty full-text lane establishes vector-only results for that query, not that the entire
+full-text index is empty. The sparse lane uses PostgreSQL `ts_rank`, not BM25.
+
 ## Nightly knowledge-base refresh (Airflow)
 
 `scripts/ingest_docs.py` was a manual, one-shot script. `airflow/dags/knowledge_base_refresh.py`
