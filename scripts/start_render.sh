@@ -10,7 +10,8 @@ export PYTHONPATH=.
 
 python -m scripts.init_db
 
-arq backend.job_queue.arq_worker.WorkerSettings &
+arq --custom-log-dict backend.observability.logging.WORKER_LOG_CONFIG \
+    backend.job_queue.arq_worker.WorkerSettings &
 WORKER_PID=$!
 
 uvicorn backend.api.main:app --host 0.0.0.0 --port "${PORT:-8000}" &
