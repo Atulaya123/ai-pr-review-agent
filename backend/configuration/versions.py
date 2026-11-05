@@ -78,6 +78,7 @@ def build_behavior_manifest(
         "review_job_timeout_s": active_settings.review_job_timeout_s,
         "daily_budget_usd": active_settings.daily_budget_usd,
         "daily_judge_budget_usd": active_settings.daily_judge_budget_usd,
+        "runtime_controls_timeout_s": active_settings.runtime_controls_timeout_s,
         "embedding_provider": active_settings.embedding_provider,
         "embedding_model": active_settings.embedding_model,
         "embedding_dims": active_settings.embedding_dims,
@@ -102,6 +103,7 @@ def build_behavior_manifest(
         "prompt_library_hash": prompt_library_hash(),
         "active_prompt_hash": prompt_hashes.get(agent) if agent else None,
         "tool_schema_hash": tool_schema_hash,
+        "runtime_controls_rules_hash": _file_hash("backend/configuration/runtime_controls.py"),
         "retrieval_configuration": retrieval_configuration,
         "guardrail_rules_hash": _digest(
             {

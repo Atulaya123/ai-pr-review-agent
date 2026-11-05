@@ -254,3 +254,65 @@ PYTHONPATH=. mypy backend --ignore-missing-imports                      # clean
 
 Tests run against a separate `aipr_review_test` database (auto-created), never the dev
 database used for manual demos — the test fixtures drop all tables on teardown.
+
+## Runtime review controls
+
+Controls are a validated JSON document at `aipr:runtime_controls` in the existing Redis.
+They are not cached: each specialist checks before dispatch, the aggregator checks at
+the gate, and the worker checks immediately before GitHub side effects.
+
+```bash
+python -m scripts.runtime_controls                     # read current flags and version hash
+python -m scripts.runtime_controls --posting disabled  # no GitHub reviews, comments or labels
+python -m scripts.runtime_controls --force-hitl on      # every finding enters the human queue
+python -m scripts.runtime_controls --disable-specialist docs
+python -m scripts.runtime_controls --posting enabled --force-hitl off --disable-specialist none
+```
+
+Run with the deployed service's Redis configuration through your authorized operational
+environment; do not paste credentials into commands or logs. Updates preserve other flags
+and use Redis WATCH to prevent lost concurrent edits. No redeploy is needed. Already
+dispatched model calls or GitHub requests are not cancelled. Posting suppression leaves
+review execution, database records and the human queue intact. Force-HITL preserves the
+calibrated threshold and minimum-confidence calculation; a review with no findings has
+nothing to enqueue. A disabled specialist is recorded explicitly, not counted as reviewed.
+
+An absent control document uses the normal defaults (posting on, force-HITL off, all
+specialists enabled). Do not delete the document to reset it: use the command above.
+Unreadable or invalid control data disables posting and forces HITL while recording the
+unavailable state. Redis authorization/durability and production flag toggles are not
+verified by the local tests. Control values and their hash accompany dispatch/gate events
+and structured logs; the behavior manifest hashes the control rules, not an assumed
+production flag snapshot.
+
+### Configuration audit (Item 11)
+
+**Unread settings:** none among the 28 declared `Settings` fields, including the new
+control-read timeout. This is a static attribute-read audit excluding tests and manifest
+serialization, not a claim that every configured production path has been exercised.
+Conditional credentials are read only for their selected provider; LangSmith requires
+both its enable flag and key. `get_settings()` caches environment settings, so changing an
+environment variable does not update a running process; only the Redis controls above
+are hot-readable.
+
+**Hard-coded behavior candidates, still outstanding:**
+
+- Model identifiers: the provider-to-model mapping in `backend/agents/base_agent.py`.
+- Retrieval sizing/scoring: context `top_k=5`, lane size `20`, and RRF damping `60`
+  in `backend/memory/context_retriever.py` and `backend/memory/tiger_client.py`.
+- Sparse term cap `24` and selection rules in `backend/memory/sparse_query.py`.
+- External-call deadlines: `20` seconds generally, `90` seconds for generation, and
+  `30` seconds for local embeddings in `backend/reliability/timeout.py` and
+  `backend/memory/embedder.py`.
+- Retry policy: three attempts, half-second initial backoff and jitter in
+  `backend/reliability/retry.py` and `backend/agents/base_agent.py`.
+- Circuit breaking: five failures, thirty-second reset, and process-wide scope in
+  `backend/reliability/circuit_breaker.py` and `backend/agents/base_agent.py`.
+- Deployment/integration defaults: local Ollama endpoints, GitHub API URL/JWT lifetime,
+  and handled PR actions in `backend/tools/llm_client.py`,
+  `backend/memory/embedder.py`, `backend/integrations/github_client.py`, and
+  `backend/webhook_receiver/router.py`.
+
+These are audit findings, not newly advertised settings. The calibrated HITL policy,
+guardrail patterns and citation rules remain deliberate, versioned policy rather than
+being casually exposed as incident-response knobs.

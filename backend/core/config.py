@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # queue
     redis_url: str = "redis://localhost:6480/0"
+    runtime_controls_timeout_s: float = Field(default=2.0, gt=0)
 
     # llm
     llm_provider: str = "mock"  # "openai" | "anthropic" | "ollama" | "groq" | "mock"

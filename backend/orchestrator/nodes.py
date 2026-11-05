@@ -5,10 +5,11 @@ from backend.agents.docs_agent import build_docs_agent
 from backend.agents.quality_agent import build_quality_agent
 from backend.agents.security_agent import build_security_agent
 from backend.agents.test_agent import build_tests_agent
+from backend.configuration.runtime_controls import get_runtime_controls
 from backend.hitl.gate import apply_hitl_gate
 from backend.integrations.github_client import GitHubClient
 from backend.memory.context_retriever import get_retrieved_context
-from backend.models.enums import AgentType
+from backend.models.enums import AgentType, ReviewOutcome
 from backend.models.findings import Finding
 from backend.observability.events import emit_agent_event
 from backend.observability.logging import log_stage
@@ -59,27 +60,55 @@ async def build_context(state: ReviewState) -> dict:
 
 
 async def security_node(state: ReviewState) -> dict:
+    if await _specialist_disabled(state, AgentType.SECURITY):
+        return {"security_findings": []}
     agent = build_security_agent(get_llm_client())
     findings = await agent.review(state["request"], state["retrieved_context"])
     return {"security_findings": findings}
 
 
 async def quality_node(state: ReviewState) -> dict:
+    if await _specialist_disabled(state, AgentType.QUALITY):
+        return {"quality_findings": []}
     agent = build_quality_agent(get_llm_client())
     findings = await agent.review(state["request"], state["retrieved_context"])
     return {"quality_findings": findings}
 
 
 async def tests_node(state: ReviewState) -> dict:
+    if await _specialist_disabled(state, AgentType.TESTS):
+        return {"tests_findings": []}
     agent = build_tests_agent(get_llm_client())
     findings = await agent.review(state["request"], state["retrieved_context"])
     return {"tests_findings": findings}
 
 
 async def docs_node(state: ReviewState) -> dict:
+    if await _specialist_disabled(state, AgentType.DOCS):
+        return {"docs_findings": []}
     agent = build_docs_agent(get_llm_client())
     findings = await agent.review(state["request"], state["retrieved_context"])
     return {"docs_findings": findings}
+
+
+async def _specialist_disabled(state: ReviewState, agent: AgentType) -> bool:
+    controls = await get_runtime_controls()
+    disabled = controls.disabled_specialist == agent.value
+    await emit_agent_event(
+        state["request"].review_id,
+        agent,
+        "specialist.dispatch",
+        outcome="disabled" if disabled else "enabled",
+        payload={
+            "runtime_controls": controls.model_dump(),
+            "runtime_controls_hash": controls.version,
+        },
+    )
+    if disabled:
+        log_stage(
+            "specialist.disabled", request=state["request"], stage="dispatch", agent=agent.value
+        )
+    return disabled
 
 
 def _dedup(findings: list[Finding]) -> list[Finding]:
@@ -160,6 +189,9 @@ async def aggregate_node(state: ReviewState) -> dict:
     gate_started_ns = monotonic_now_ns()
     gate_started_at = datetime.now(timezone.utc)
     overall_confidence, outcome = apply_hitl_gate(merged)
+    controls = await get_runtime_controls()
+    if controls.force_hitl and merged:
+        outcome = ReviewOutcome.ESCALATED
     log_stage(
         "gate.decided",
         request=request,
@@ -167,6 +199,8 @@ async def aggregate_node(state: ReviewState) -> dict:
         outcome=outcome.value,
         confidence=overall_confidence,
         finding_ids=[str(finding.id) for finding in merged],
+        runtime_controls=controls.model_dump(),
+        runtime_controls_hash=controls.version,
     )
     await emit_agent_event(
         state["request"].review_id,
@@ -177,6 +211,13 @@ async def aggregate_node(state: ReviewState) -> dict:
         payload={
             "started_at_utc": gate_started_at.isoformat(),
             "duration_clock": "monotonic",
+            "runtime_controls": controls.model_dump(),
+            "runtime_controls_hash": controls.version,
         },
     )
-    return {"findings": merged, "overall_confidence": overall_confidence, "outcome": outcome}
+    return {
+        "findings": merged,
+        "overall_confidence": overall_confidence,
+        "outcome": outcome,
+        "gate_reason": "force_hitl" if controls.force_hitl and merged else "calibrated_gate",
+    }

@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import TypedDict, NotRequired
 
 from backend.models.enums import ReviewOutcome
 from backend.models.findings import Finding
@@ -15,3 +15,4 @@ class ReviewState(TypedDict):
     findings: list[Finding]
     overall_confidence: float
     outcome: ReviewOutcome
+    gate_reason: NotRequired[str]

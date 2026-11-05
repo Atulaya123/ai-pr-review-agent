@@ -7,6 +7,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from backend.core.config import get_settings
+from backend.configuration.runtime_controls import get_runtime_controls
 from backend.core.workflow_engine import WorkflowEngine, get_workflow_engine
 from backend.database.repository import enqueue_hitl_review, get_posted_review, save_review_result
 from backend.database.session import get_sessionmaker
@@ -254,7 +255,16 @@ async def _execute_review_job_inner(
         outcome=final_state["outcome"],
     )
 
-    if installation_id is not None:
+    controls = await get_runtime_controls()
+    if controls.posting_disabled:
+        log_stage(
+            "github.suppressed",
+            stage="posting",
+            outcome="kill_switch",
+            runtime_controls=controls.model_dump(),
+            runtime_controls_hash=controls.version,
+        )
+    if installation_id is not None and not controls.posting_disabled:
         try:
             if result.outcome == ReviewOutcome.ESCALATED:
                 await github.request_human_review(
@@ -284,11 +294,16 @@ async def _execute_review_job_inner(
     )
 
     if result.outcome == ReviewOutcome.ESCALATED:
+        reason = (
+            "runtime force-HITL enabled"
+            if final_state.get("gate_reason") == "force_hitl"
+            else f"overall_confidence {result.overall_confidence:.2f} below threshold or verification failed"
+        )
         async with get_sessionmaker()() as session:
             await enqueue_hitl_review(
                 session,
                 request.review_id,
-                reason=f"overall_confidence {result.overall_confidence:.2f} below threshold",
+                reason=reason,
             )
         await emit_agent_event(
             request.review_id,

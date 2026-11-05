@@ -36,6 +36,8 @@ _FIELDS = {
     "stage",
     "chunk_count",
     "file_count",
+    "runtime_controls",
+    "runtime_controls_hash",
 }
 _logger = logging.getLogger("backend.review_trace")
 _SECRET = re.compile(

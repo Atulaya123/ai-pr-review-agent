@@ -18,6 +18,7 @@ from backend.models.review import ReviewRequest
 from backend.prompts.registry import get_system_prompt
 from backend.security.injection_guard import sanitize_review_request
 from backend.observability.logging import review_log_context, log_stage
+from backend.configuration.runtime_controls import RuntimeControls
 from backend.tools.llm_client import LLMClient, LLMResponse
 
 REPLAY_AGENTS = (
@@ -126,6 +127,13 @@ async def run_replay_fixture(fixture: ReviewReplayFixture) -> ReplayResult:
         stack.enter_context(review_log_context(fixture.request))
         log_stage("review.enqueued", stage="enqueue")
         log_stage("worker.started", stage="pickup")
+
+        async def replay_controls() -> RuntimeControls:
+            return RuntimeControls()
+
+        stack.enter_context(
+            patch("backend.orchestrator.nodes.get_runtime_controls", replay_controls)
+        )
         stack.enter_context(
             patch.dict(
                 os.environ,
