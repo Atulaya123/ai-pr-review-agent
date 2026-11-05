@@ -5,6 +5,7 @@ from backend.core.config import Settings
 from backend.database.cost_ledger import CallPurpose
 from backend.evaluation.experiments import run_configuration_comparison
 from backend.evaluation.replay import load_replay_fixture
+from backend.evaluation.replay import ReviewReplayFixture
 from backend.models.enums import AgentType
 from backend.tools.llm_client import LLMClient, LLMResponse
 
@@ -68,3 +69,31 @@ async def test_mlflow_comparison_names_fixture_changes_and_versions_prompt(
         {"summary": "Unnecessary arithmetic helper", "status": "improved"}
     ]
     assert comparison.aggregate_deltas["finding_f1"] > 0
+
+
+async def test_retrieval_comparison_changes_only_retrieval_mode(tmp_path: Path) -> None:
+    fixture = load_replay_fixture(_FIXTURE)
+    observed: list[str] = []
+
+    async def retrieval(case: ReviewReplayFixture, settings: Settings) -> str:
+        observed.append(settings.sparse_query_mode)
+        return case.retrieved_context
+
+    comparison = await run_configuration_comparison(
+        [fixture],
+        candidate_retrieval_mode="bounded_or",
+        settings=Settings.model_construct(llm_provider="mock", sparse_query_mode="whole_document"),
+        retrieval_runner=retrieval,
+        tracking_uri=f"sqlite:///{tmp_path / 'retrieval.db'}",
+        client_factory=lambda settings: PromptSensitiveClient(),
+    )
+    assert observed == ["whole_document", "bounded_or"]
+    before = comparison.baseline.manifest.behavior_versions
+    after = comparison.candidate.manifest.behavior_versions
+    assert before["prompt_library_hash"] == after["prompt_library_hash"]
+    assert before["model_settings"] == after["model_settings"]
+    assert before["retrieval_configuration"] != after["retrieval_configuration"]
+    assert comparison.baseline.manifest.fixture_content_hash == (
+        comparison.candidate.manifest.fixture_content_hash
+    )
+    assert comparison.aggregate_deltas["finding_f1"] == 0

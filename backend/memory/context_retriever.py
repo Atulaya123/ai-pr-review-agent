@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from backend.models.enums import AgentType
+from backend.core.config import get_settings
 from backend.memory.embedder import embed_text
 from backend.memory.tiger_client import hybrid_search_chunks
 from backend.models.review import ReviewRequest
@@ -29,7 +30,12 @@ async def get_retrieved_context(request: ReviewRequest, top_k: int = 5) -> str:
     started_at = datetime.now(timezone.utc)
     try:
         embedding = await embed_text(diff_text)
-        chunks = await hybrid_search_chunks(request.repo, embedding, diff_text, top_k=top_k)
+        sparse_document = (
+            "\n".join(f"--- {file.path} ---\n{file.patch}" for file in request.files)
+            if get_settings().sparse_query_mode == "bounded_or"
+            else diff_text
+        )
+        chunks = await hybrid_search_chunks(request.repo, embedding, sparse_document, top_k=top_k)
     except Exception:
         logger.exception("retrieval failed for %s, falling back to no context", request.repo)
         await emit_agent_event(

@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.sql.elements import TextClause
 
 from backend.memory import tiger_client
+from backend.core.config import Settings
 
 
 class _Result:
@@ -26,6 +27,7 @@ class _Session:
     ) -> None:
         self._vector_rows = vector_rows
         self._fulltext_rows = fulltext_rows
+        self.queries: list[dict[str, object]] = []
 
     async def __aenter__(self) -> "_Session":
         return self
@@ -34,7 +36,7 @@ class _Session:
         return None
 
     async def execute(self, statement: TextClause, params: dict[str, object]) -> _Result:
-        del params
+        self.queries.append(params)
         rows = self._fulltext_rows if "content_tsv" in str(statement) else self._vector_rows
         return _Result(rows)
 
@@ -100,3 +102,22 @@ def test_render_worker_configuration_emits_retrieval_info_logs() -> None:
         "retrieval_lane_counts query_type=content mode=vector_only "
         "vector_count=1 fulltext_count=0 overlap_count=0 fused_count=1"
     ) in result.stderr
+
+
+@pytest.mark.parametrize("symbols", [False, True])
+async def test_both_sparse_search_paths_use_bounded_or_query(
+    monkeypatch: pytest.MonkeyPatch, symbols: bool
+) -> None:
+    session = _Session([], [])
+    monkeypatch.setattr(tiger_client, "get_sessionmaker", lambda: lambda: session)
+    monkeypatch.setattr(
+        tiger_client,
+        "get_settings",
+        lambda: Settings.model_construct(sparse_query_mode="bounded_or"),
+    )
+    search = (
+        tiger_client.hybrid_search_chunk_symbols if symbols else tiger_client.hybrid_search_chunks
+    )
+    await search("owner/repo", [0.1], "retrieve_context get_findings")
+    assert session.queries[0]["emb"] == "[0.1]"
+    assert session.queries[1]["query"] == '"get_findings" OR "retrieve_context"'

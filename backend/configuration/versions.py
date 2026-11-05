@@ -88,6 +88,8 @@ def build_behavior_manifest(
         "top_k": 5,
         "lane_k": 20,
         "rrf_k": RRF_K,
+        "sparse_query_mode": active_settings.sparse_query_mode,
+        "sparse_query_rules_hash": _file_hash("backend/memory/sparse_query.py"),
         "embedding_provider": active_settings.embedding_provider,
         "embedding_model": active_settings.embedding_model,
         "embedding_dims": active_settings.embedding_dims,

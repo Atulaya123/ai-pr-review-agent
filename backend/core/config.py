@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 from functools import lru_cache
 
 from pydantic import Field
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     embedding_dims: int = 768
     embedding_provider: str = "ollama"  # "ollama" | "gemini" | "openai"
+    sparse_query_mode: Literal["whole_document", "bounded_or"] = "bounded_or"
 
     # github app
     github_app_id: str | None = None

@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -33,6 +33,7 @@ from backend.tools.llm_client import (
 )
 
 ClientFactory = Callable[[Settings], LLMClient]
+RetrievalRunner = Callable[[ReviewReplayFixture, Settings], Awaitable[str]]
 
 
 class ExperimentManifest(BaseModel):
@@ -41,6 +42,7 @@ class ExperimentManifest(BaseModel):
     name: str
     fixture_set_version: str
     fixture_names: tuple[str, ...]
+    fixture_content_hash: str
     behavior_versions: dict[str, object]
     manifest_hash: str
 
@@ -93,8 +95,10 @@ class _RunUsage:
 async def run_configuration_comparison(
     fixtures: list[ReviewReplayFixture],
     *,
-    candidate_agent: AgentType,
-    candidate_prompt: str,
+    candidate_agent: AgentType | None = None,
+    candidate_prompt: str | None = None,
+    candidate_retrieval_mode: str | None = None,
+    retrieval_runner: RetrievalRunner | None = None,
     settings: Settings | None = None,
     tracking_uri: str | None = None,
     experiment_name: str = "ai-pr-review-config-comparison",
@@ -108,6 +112,20 @@ async def run_configuration_comparison(
         raise ValueError("all comparison fixtures must have the same fixture-set version")
 
     active_settings = settings or get_settings()
+    prompt_change = candidate_agent is not None and candidate_prompt is not None
+    if prompt_change == (candidate_retrieval_mode is not None):
+        raise ValueError("change exactly one prompt or retrieval mode")
+    if (candidate_agent is None) != (candidate_prompt is None):
+        raise ValueError("candidate prompt and agent must be supplied together")
+    if candidate_retrieval_mode not in (None, "whole_document", "bounded_or"):
+        raise ValueError("unsupported retrieval mode")
+    if candidate_retrieval_mode is not None and retrieval_runner is None:
+        raise ValueError("retrieval comparisons require an actual retrieval runner")
+    candidate_settings = (
+        active_settings.model_copy(update={"sparse_query_mode": candidate_retrieval_mode})
+        if candidate_retrieval_mode
+        else active_settings
+    )
     model_identifier = resolve_model_for_provider(active_settings.llm_provider)
     factory = client_factory or get_llm_client
     fixture_set_version = next(iter(fixture_versions))
@@ -121,17 +139,23 @@ async def run_configuration_comparison(
         tracking_uri=tracking_uri,
         experiment_name=experiment_name,
         fixture_set_version=fixture_set_version,
+        retrieval_runner=retrieval_runner,
     )
     candidate = await _run_configuration(
         fixtures,
         name="candidate",
-        prompt_overrides={candidate_agent.value: candidate_prompt},
-        settings=active_settings,
+        prompt_overrides=(
+            {candidate_agent.value: candidate_prompt}
+            if candidate_agent is not None and candidate_prompt is not None
+            else {}
+        ),
+        settings=candidate_settings,
         model_identifier=model_identifier,
         client_factory=factory,
         tracking_uri=tracking_uri,
         experiment_name=experiment_name,
         fixture_set_version=fixture_set_version,
+        retrieval_runner=retrieval_runner,
     )
     comparison = _compare_results(baseline, candidate)
     _log_comparison(comparison, tracking_uri=tracking_uri, experiment_name=experiment_name)
@@ -149,6 +173,7 @@ async def _run_configuration(
     tracking_uri: str | None,
     experiment_name: str,
     fixture_set_version: str,
+    retrieval_runner: RetrievalRunner | None,
 ) -> ConfigurationExperimentResult:
     _configure_mlflow(mlflow, tracking_uri, experiment_name)
     with use_prompt_overrides(prompt_overrides):
@@ -162,12 +187,14 @@ async def _run_configuration(
         "fixture_set_version": fixture_set_version,
         "fixture_names": tuple(fixture.name for fixture in fixtures),
         "behavior_versions": behavior_versions,
+        "fixture_content_hash": _digest([fixture.model_dump(mode="json") for fixture in fixtures]),
     }
     manifest_hash = _digest(manifest_payload)
     manifest = ExperimentManifest(
         name=name,
         fixture_set_version=fixture_set_version,
         fixture_names=tuple(fixture.name for fixture in fixtures),
+        fixture_content_hash=str(manifest_payload["fixture_content_hash"]),
         behavior_versions=behavior_versions,
         manifest_hash=manifest_hash,
     )
@@ -205,6 +232,7 @@ async def _run_configuration(
                     prompt_overrides=prompt_overrides,
                     client_factory=client_factory,
                     usage=usage,
+                    retrieval_runner=retrieval_runner,
                 )
                 case_results.append(case_result)
                 artifact_path = Path(temp_dir) / f"{fixture.name}.json"
@@ -247,6 +275,7 @@ async def _run_fixture(
     prompt_overrides: dict[str, str],
     client_factory: ClientFactory,
     usage: _RunUsage,
+    retrieval_runner: RetrievalRunner | None,
 ) -> FixtureExperimentResult:
     if fixture.request.installation_id is not None:
         raise ValueError("experiments cannot perform GitHub repository lookups")
@@ -284,7 +313,11 @@ async def _run_fixture(
     client = _UsageTrackingClient(client_factory(settings))
 
     async def fixed_retrieval(request: object) -> str:
-        return fixture.retrieved_context
+        return (
+            await retrieval_runner(fixture, settings)
+            if retrieval_runner is not None
+            else fixture.retrieved_context
+        )
 
     async def no_event_writes(*args: object, **kwargs: object) -> None:
         return None
@@ -428,6 +461,8 @@ def _compare_results(
             }
         )
     deltas = {
+        "mean_confidence": _mean(case.overall_confidence for case in candidate.cases)
+        - _mean(case.overall_confidence for case in baseline.cases),
         "finding_f1": candidate.mean_finding_f1 - baseline.mean_finding_f1,
         "escalation_rate": candidate.escalation_rate - baseline.escalation_rate,
         "mean_latency_ms": candidate.mean_latency_ms - baseline.mean_latency_ms,

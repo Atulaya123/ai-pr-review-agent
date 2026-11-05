@@ -130,6 +130,20 @@ Deployed evidence from PR #16 on 2026-11-05: the review query returned 6 vector 
 hybrid implementation does not establish that both lanes contribute on every query.
 Sparse ranking uses PostgreSQL `ts_rank`, not BM25.
 
+The sparse query now uses at most 24 OR-connected lexical terms, prioritizing identifiers
+and path components, then frequent changed-text terms. Dense retrieval still embeds the
+whole diff. `SPARSE_QUERY_MODE=whole_document` restores the old boolean query for comparison;
+the default is `bounded_or`. Query rules and mode are recorded in behavior manifests.
+
+Run `python -m scripts.compare_sparse_retrieval` with local Compose PostgreSQL running and
+development dependencies installed. It persists MLflow runs in `.mlflow/sparse-comparison.db`
+and a report in `.mlflow/sparse-comparison.json`. Against the six checked-in architecture
+chunks, the three existing replay fixtures yielded zero sparse candidates with the old query;
+the bounded query retrieved `reliability_layer_required` for `known_bad` and left the other
+two unchanged. Vector ordering is synthetic and fixed, and model outputs are recorded/fixed:
+this measures local retrieval behavior, not improved live-model finding quality or production
+corpus equivalence. Confidence, finding quality, escalation, and replay cost were unchanged.
+
 ## Nightly knowledge-base refresh (Airflow)
 
 `scripts/ingest_docs.py` was a manual, one-shot script. `airflow/dags/knowledge_base_refresh.py`

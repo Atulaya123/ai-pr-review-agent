@@ -4,6 +4,8 @@ import logging
 from sqlalchemy import text
 
 from backend.database.session import get_sessionmaker
+from backend.core.config import get_settings
+from backend.memory.sparse_query import build_sparse_query
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,11 @@ async def hybrid_search_chunks(
     kept separate from top_k (the final result count) so fusion has more than
     top_k candidates per lane to actually rank against each other.
     """
+    sparse_query = (
+        build_sparse_query(query_text)
+        if get_settings().sparse_query_mode == "bounded_or"
+        else query_text
+    )
     async with get_sessionmaker()() as session:
         vector_result = await session.execute(
             text("""
@@ -121,7 +128,7 @@ async def hybrid_search_chunks(
                 ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
                 LIMIT :k
                 """),
-            {"repo": repo, "query": query_text, "k": lane_k},
+            {"repo": repo, "query": sparse_query, "k": lane_k},
         )
         fulltext_rows = list(fulltext_result)
 
@@ -153,6 +160,11 @@ async def hybrid_search_chunk_symbols(
     Recall@k/MRR actually measure what get_retrieved_context does at review
     time, not a different (pure-vector) code path that would silently drift
     from it."""
+    sparse_query = (
+        build_sparse_query(query_text)
+        if get_settings().sparse_query_mode == "bounded_or"
+        else query_text
+    )
     async with get_sessionmaker()() as session:
         vector_result = await session.execute(
             text("""
@@ -174,7 +186,7 @@ async def hybrid_search_chunk_symbols(
                 ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
                 LIMIT :k
                 """),
-            {"repo": repo, "query": query_text, "k": lane_k},
+            {"repo": repo, "query": sparse_query, "k": lane_k},
         )
         fulltext_rows = list(fulltext_result)
 
