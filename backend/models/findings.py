@@ -16,6 +16,7 @@ class Finding(BaseModel):
     file_path: str
     line_start: int
     line_end: int
+    evidence: str | None = None
     suggestion: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str

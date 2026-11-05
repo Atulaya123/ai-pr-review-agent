@@ -1,13 +1,17 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
+from backend.database.models import AgentEvent
 from backend.database.repository import save_review_result
 from backend.job_queue.arq_worker import _clamp_findings_to_diff, run_review_job
 from backend.models.enums import AgentType, ReviewOutcome, Severity
 from backend.models.findings import Finding
 from backend.models.review import DiffFile, ReviewResult
+from backend.observability.timing import clock_domain_id, monotonic_now_ns
 
 PATCH = """diff --git a/demo/vulnerable_lookup.py b/demo/vulnerable_lookup.py
 new file mode 100644
@@ -39,14 +43,18 @@ def _finding(line_start: int, line_end: int) -> Finding:
 
 def test_out_of_range_line_end_gets_clamped():
     findings = [_finding(2, 6)]  # file only has 5 lines
-    clamped = _clamp_findings_to_diff(findings, [DiffFile(path="demo/vulnerable_lookup.py", patch=PATCH)])
+    clamped = _clamp_findings_to_diff(
+        findings, [DiffFile(path="demo/vulnerable_lookup.py", patch=PATCH)]
+    )
     assert clamped[0].line_start == 2
     assert clamped[0].line_end == 5
 
 
 def test_in_range_finding_is_unchanged():
     findings = [_finding(2, 4)]
-    clamped = _clamp_findings_to_diff(findings, [DiffFile(path="demo/vulnerable_lookup.py", patch=PATCH)])
+    clamped = _clamp_findings_to_diff(
+        findings, [DiffFile(path="demo/vulnerable_lookup.py", patch=PATCH)]
+    )
     assert clamped[0].line_start == 2
     assert clamped[0].line_end == 4
 
@@ -68,7 +76,11 @@ async def test_run_review_job_skips_duplicate_post_on_already_posted_commit(db_s
     pipeline and posts a second, duplicate review for a commit already
     handled."""
     existing = ReviewResult(
-        review_id=uuid4(), findings=[], overall_confidence=1.0, outcome=ReviewOutcome.APPROVED, posted=True
+        review_id=uuid4(),
+        findings=[],
+        overall_confidence=1.0,
+        outcome=ReviewOutcome.APPROVED,
+        posted=True,
     )
     await save_review_result(db_session, "acme/demo", 7, "sha-already-posted", existing)
 
@@ -88,3 +100,43 @@ async def test_run_review_job_skips_duplicate_post_on_already_posted_commit(db_s
     github.post_review.assert_not_called()
     github.request_human_review.assert_not_called()
     engine.run.assert_not_called()
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_worker_records_queue_active_and_hitl_timing_events(db_session):
+    review_id = uuid4()
+    engine = AsyncMock()
+    engine.run.return_value = {
+        "findings": [],
+        "overall_confidence": 0.8,
+        "outcome": ReviewOutcome.ESCALATED,
+    }
+
+    returned_id = await run_review_job(
+        {"github_client": AsyncMock(), "workflow_engine": engine},
+        repo="acme/demo",
+        pr_number=8,
+        installation_id=None,
+        head_sha="sha-timed",
+        files=[],
+        review_id=str(review_id),
+        enqueued_at_utc=datetime.now(timezone.utc).isoformat(),
+        enqueued_monotonic_ns=monotonic_now_ns() - 2_000_000,
+        enqueue_clock_domain=clock_domain_id(),
+    )
+
+    events = (
+        (await db_session.execute(select(AgentEvent).where(AgentEvent.review_id == review_id)))
+        .scalars()
+        .all()
+    )
+    by_type = {event.event_type: event for event in events}
+
+    assert returned_id == str(review_id)
+    assert by_type["queue.complete"].latency_ms is not None
+    assert by_type["queue.complete"].outcome == "measured"
+    assert by_type["queue.complete"].payload["duration_clock"] == "monotonic"
+    assert by_type["worker.active"].latency_ms is not None
+    assert by_type["worker.active"].payload["duration_clock"] == "monotonic"
+    assert by_type["hitl.wait.started"].outcome == "pending"
+    assert all(event.ts.tzinfo is not None for event in events)

@@ -14,6 +14,10 @@ class BudgetExceededError(AIPRReviewError):
     """The daily LLM spend cap has been reached; refuse further calls."""
 
 
+class PricingUnavailableError(AIPRReviewError):
+    """No effective provider/model price is available to reserve a call."""
+
+
 class CircuitOpenError(AIPRReviewError):
     """The circuit breaker for this dependency is open; fail fast."""
 

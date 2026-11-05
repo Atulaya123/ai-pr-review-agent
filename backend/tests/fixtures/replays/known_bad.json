@@ -1,0 +1,45 @@
+{
+  "fixture_set_version": "2026-11-04.1",
+  "provenance": "reconstructed from the existing known-bad evaluation case",
+  "name": "known_bad",
+  "provider": "groq",
+  "model_identifier": "openai/gpt-oss-120b",
+  "prompt_hash": "219b5ccaa098f21847975a6dc79823ec4297f8682359f0c92f74d6a641dc2982",
+  "request": {
+    "review_id": "10000000-0000-4000-8000-000000000002",
+    "repo": "acme/replay-fixtures",
+    "pr_number": 2,
+    "head_sha": "known-bad-sha",
+    "files": [
+      {
+        "path": "app.py",
+        "patch": "diff --git a/app.py b/app.py\n@@ -1,2 +1,3 @@\n def lookup(user_id):\n-    query = \"SELECT * FROM users\"\n+    query = f\"SELECT * FROM users WHERE id = {user_id}\"\n+    db.execute(query)"
+      }
+    ],
+    "commit_messages": []
+  },
+  "retrieved_context": "Database queries must be parameterized when they include user-controlled values.",
+  "model_responses": {
+    "security": {"text": "{\"findings\": [{\"severity\": \"HIGH\", \"category\": \"injection\", \"summary\": \"User-controlled SQL is interpolated into a query\", \"file_path\": \"app.py\", \"line_start\": 3, \"line_end\": 3, \"evidence\": \"db.execute(query)\", \"suggestion\": \"Use a parameterized query.\", \"confidence\": 0.96, \"rationale\": \"The query includes a user-controlled value through string interpolation.\"}]}", "model": "openai/gpt-oss-120b", "tokens_in": 120, "tokens_out": 64, "raw_usage": {"prompt_tokens": 120, "completion_tokens": 64}},
+    "quality": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 90, "tokens_out": 4, "raw_usage": {"prompt_tokens": 90, "completion_tokens": 4}},
+    "tests": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 90, "tokens_out": 4, "raw_usage": {"prompt_tokens": 90, "completion_tokens": 4}},
+    "docs": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 90, "tokens_out": 4, "raw_usage": {"prompt_tokens": 90, "completion_tokens": 4}}
+  },
+  "expected_findings": [
+    {
+      "agent_type": "security",
+      "severity": "HIGH",
+      "category": "injection",
+      "summary": "User-controlled SQL is interpolated into a query",
+      "file_path": "app.py",
+      "line_start": 3,
+      "line_end": 3,
+      "evidence": "db.execute(query)",
+      "suggestion": "Use a parameterized query.",
+      "confidence": 0.96,
+      "rationale": "The query includes a user-controlled value through string interpolation."
+    }
+  ],
+  "expected_overall_confidence": 0.96,
+  "expected_outcome": "request_changes"
+}

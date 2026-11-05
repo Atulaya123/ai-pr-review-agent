@@ -47,8 +47,8 @@ async def test_shared_secret_passes_correct_token():
 
 def test_build_mcp_fails_closed_without_secret():
     """No MCP_SHARED_SECRET must mean no /mcp at all, not an open endpoint —
-    review_diff (Phase 2) will trigger real LLM cost with daily_budget_usd
-    still unenforced."""
+    review_diff (Phase 2) will trigger real LLM cost and must remain behind
+    the shared-secret middleware."""
     settings = Settings(mcp_shared_secret=None)
     assert build_mcp(settings) is None
 
@@ -97,7 +97,9 @@ async def test_mcp_session_manager_lifespan_required_for_real_requests():
         "Content-Type": "application/json",
     }
     async with mcp.session_manager.run():
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
             init = await client.post(
                 "/mcp/",
                 json={
@@ -158,7 +160,11 @@ async def test_mcp_server_registers_tools_and_resources_cleanly():
 @pytest.mark.usefixtures("db_session")
 async def test_get_findings_impl_reports_latest_review(db_session):
     result = ReviewResult(
-        review_id=uuid4(), findings=[], overall_confidence=0.95, outcome=ReviewOutcome.APPROVED, posted=True
+        review_id=uuid4(),
+        findings=[],
+        overall_confidence=0.95,
+        outcome=ReviewOutcome.APPROVED,
+        posted=True,
     )
     await save_review_result(db_session, "acme/demo", 42, "sha-mcp-test", result)
 

@@ -28,4 +28,6 @@ def mean_reciprocal_rank(results: list[tuple[list[str], set[str]]]) -> float:
     """MRR across a test set of (retrieved, relevant) pairs."""
     if not results:
         return 0.0
-    return sum(reciprocal_rank(retrieved, relevant) for retrieved, relevant in results) / len(results)
+    return sum(reciprocal_rank(retrieved, relevant) for retrieved, relevant in results) / len(
+        results
+    )

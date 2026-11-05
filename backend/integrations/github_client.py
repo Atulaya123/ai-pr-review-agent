@@ -1,5 +1,7 @@
+import base64
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -39,13 +41,21 @@ class GitHubClient:
             # stripping real newlines down to literal "\n", adding surrounding quotes,
             # or introducing \r\n. Undo all three rather than assume a clean paste.
             private_key = self.settings.github_private_key.strip()
-            if len(private_key) >= 2 and private_key[0] == private_key[-1] and private_key[0] in "\"'":
+            if (
+                len(private_key) >= 2
+                and private_key[0] == private_key[-1]
+                and private_key[0] in "\"'"
+            ):
                 private_key = private_key[1:-1]
-            private_key = private_key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
+            private_key = (
+                private_key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
+            )
         elif self.settings.github_private_key_path:
             private_key = Path(self.settings.github_private_key_path).read_text()
         else:
-            raise RuntimeError("neither GITHUB_PRIVATE_KEY nor GITHUB_PRIVATE_KEY_PATH is configured")
+            raise RuntimeError(
+                "neither GITHUB_PRIVATE_KEY nor GITHUB_PRIVATE_KEY_PATH is configured"
+            )
         now = int(time.time())
         payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": self.settings.github_app_id}
         return jwt.encode(payload, private_key, algorithm="RS256")
@@ -72,10 +82,43 @@ class GitHubClient:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}",
-                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3.diff"},
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github.v3.diff",
+                    },
                 )
                 resp.raise_for_status()
                 return resp.text
+
+        return await with_timeout(retry_with_backoff(_call))
+
+    async def fetch_file_contents(
+        self, repo: str, path: str, ref: str, installation_id: int
+    ) -> str | None:
+        """Fetch a repository file at a commit; return None only when it is absent."""
+        token = await self._installation_token(installation_id)
+        encoded_path = quote(path, safe="/")
+
+        async def _call():
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{GITHUB_API}/repos/{repo}/contents/{encoded_path}",
+                    params={"ref": ref},
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                )
+                if resp.status_code == 404:
+                    return None
+                resp.raise_for_status()
+                payload = resp.json()
+                if not isinstance(payload, dict) or payload.get("encoding") != "base64":
+                    raise ValueError(f"GitHub returned unsupported content for {path}")
+                content = payload.get("content")
+                if not isinstance(content, str):
+                    raise ValueError(f"GitHub returned no file content for {path}")
+                return base64.b64decode(content, validate=False).decode("utf-8")
 
         return await with_timeout(retry_with_backoff(_call))
 
@@ -105,7 +148,10 @@ class GitHubClient:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
-                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github+json",
+                    },
                     json={"body": body, "event": event, "comments": comments},
                 )
                 resp.raise_for_status()
@@ -139,7 +185,10 @@ class GitHubClient:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/comments",
-                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github+json",
+                    },
                     json={"body": body},
                 )
                 resp.raise_for_status()
@@ -151,7 +200,10 @@ class GitHubClient:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/labels",
-                    headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github+json",
+                    },
                     json={"labels": ["needs-human-review"]},
                 )
                 resp.raise_for_status()
@@ -175,7 +227,9 @@ def _escalation_body(overall_confidence: float, findings: list[Finding]) -> str:
         "",
     ]
     for f in findings:
-        lines.append(f"- **[{f.severity.value}] {f.category}** ({f.file_path}:{f.line_start}, confidence {f.confidence:.2f}): {f.summary}")
+        lines.append(
+            f"- **[{f.severity.value}] {f.category}** ({f.file_path}:{f.line_start}, confidence {f.confidence:.2f}): {f.summary}"
+        )
     return "\n".join(lines)
 
 

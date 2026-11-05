@@ -10,7 +10,9 @@ import os
 # able to read a real database URL. Must happen before
 # backend.core.config.get_settings() is ever called (it's lru_cached on first
 # call, so this must happen at import time here).
-os.environ["TIGER_DATABASE_URL"] = "postgresql+asyncpg://postgres:postgres@localhost:5544/aipr_review_test"
+os.environ["TIGER_DATABASE_URL"] = (
+    "postgresql+asyncpg://postgres:postgres@localhost:5544/aipr_review_test"
+)
 
 # Same leak, same fix: a shell with LLM_PROVIDER=ollama (or any real provider)
 # exported previously bypassed this and made test_e2e_review.py's assertions
@@ -40,7 +42,9 @@ async def _ensure_test_database_exists(test_db_url: str) -> None:
     admin_engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with admin_engine.connect() as conn:
-            exists = await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name})
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
+            )
             if not exists:
                 await conn.execute(text(f'CREATE DATABASE "{db_name}"'))
     finally:

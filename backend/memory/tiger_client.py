@@ -1,8 +1,11 @@
 from dataclasses import dataclass
+import logging
 
 from sqlalchemy import text
 
 from backend.database.session import get_sessionmaker
+
+logger = logging.getLogger(__name__)
 
 
 def to_vector_literal(embedding: list[float]) -> str:
@@ -39,8 +42,7 @@ async def upsert_chunks(repo: str, chunks: list[ChunkRecord]) -> int:
     async with get_sessionmaker()() as session:
         for chunk in chunks:
             await session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO code_chunks (repo, path, symbol, chunk_index, content, embedding)
                     VALUES (:repo, :path, :symbol, :chunk_index, :content, CAST(:emb AS vector))
                     ON CONFLICT (repo, path, chunk_index) DO UPDATE
@@ -48,8 +50,7 @@ async def upsert_chunks(repo: str, chunks: list[ChunkRecord]) -> int:
                             symbol = EXCLUDED.symbol,
                             embedding = EXCLUDED.embedding,
                             updated_at = now()
-                    """
-                ),
+                    """),
                 {
                     "repo": repo,
                     "path": chunk.path,
@@ -69,15 +70,13 @@ async def query_similar_chunks(repo: str, embedding: list[float], top_k: int = 5
     nearest chunks for this repo, closest first."""
     async with get_sessionmaker()() as session:
         result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT content, path
                 FROM code_chunks
                 WHERE repo = :repo
                 ORDER BY embedding <=> CAST(:emb AS vector)
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "emb": to_vector_literal(embedding), "k": top_k},
         )
         return [f"[{row.path}]\n{row.content}" for row in result]
@@ -103,33 +102,37 @@ async def hybrid_search_chunks(
     """
     async with get_sessionmaker()() as session:
         vector_result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT id, path, content
                 FROM code_chunks
                 WHERE repo = :repo
                 ORDER BY embedding <=> CAST(:emb AS vector)
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "emb": to_vector_literal(embedding), "k": lane_k},
         )
         vector_rows = list(vector_result)
 
         fulltext_result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT id, path, content
                 FROM code_chunks
                 WHERE repo = :repo AND content_tsv @@ websearch_to_tsquery('english', :query)
                 ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "query": query_text, "k": lane_k},
         )
         fulltext_rows = list(fulltext_result)
 
+    vector_ids = {str(row.id) for row in vector_rows}
+    fulltext_ids = {str(row.id) for row in fulltext_rows}
+    _log_retrieval_lanes(
+        query_type="content",
+        vector_ids=vector_ids,
+        fulltext_ids=fulltext_ids,
+        final_count=min(top_k, len(vector_ids | fulltext_ids)),
+    )
     scores: dict[str, float] = {}
     chunks: dict[str, tuple[str, str]] = {}
     for lane_rows in (vector_rows, fulltext_rows):
@@ -152,33 +155,37 @@ async def hybrid_search_chunk_symbols(
     from it."""
     async with get_sessionmaker()() as session:
         vector_result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT id, symbol
                 FROM code_chunks
                 WHERE repo = :repo
                 ORDER BY embedding <=> CAST(:emb AS vector)
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "emb": to_vector_literal(embedding), "k": lane_k},
         )
         vector_rows = list(vector_result)
 
         fulltext_result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT id, symbol
                 FROM code_chunks
                 WHERE repo = :repo AND content_tsv @@ websearch_to_tsquery('english', :query)
                 ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', :query)) DESC
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "query": query_text, "k": lane_k},
         )
         fulltext_rows = list(fulltext_result)
 
+    vector_ids = {str(row.id) for row in vector_rows}
+    fulltext_ids = {str(row.id) for row in fulltext_rows}
+    _log_retrieval_lanes(
+        query_type="symbols",
+        vector_ids=vector_ids,
+        fulltext_ids=fulltext_ids,
+        final_count=min(top_k, len(vector_ids | fulltext_ids)),
+    )
     scores: dict[str, float] = {}
     symbols: dict[str, str] = {}
     for lane_rows in (vector_rows, fulltext_rows):
@@ -191,22 +198,46 @@ async def hybrid_search_chunk_symbols(
     return [symbols[cid] for cid in ranked_ids]
 
 
-async def query_similar_chunk_symbols(repo: str, embedding: list[float], top_k: int = 5) -> list[str]:
+def _log_retrieval_lanes(
+    *,
+    query_type: str,
+    vector_ids: set[str],
+    fulltext_ids: set[str],
+    final_count: int,
+) -> None:
+    mode = (
+        "hybrid"
+        if vector_ids and fulltext_ids
+        else "vector_only" if vector_ids else "fulltext_only" if fulltext_ids else "empty"
+    )
+    logger.info(
+        "retrieval_lane_counts query_type=%s mode=%s vector_count=%d "
+        "fulltext_count=%d overlap_count=%d fused_count=%d",
+        query_type,
+        mode,
+        len(vector_ids),
+        len(fulltext_ids),
+        len(vector_ids & fulltext_ids),
+        final_count,
+    )
+
+
+async def query_similar_chunk_symbols(
+    repo: str, embedding: list[float], top_k: int = 5
+) -> list[str]:
     """Same ranked search as query_similar_chunks, but returns chunk symbols
     instead of content — used by the eval harness (backend/evaluation/) to
     check *which* chunk was retrieved against a test set, not to render a
     prompt."""
     async with get_sessionmaker()() as session:
         result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT symbol
                 FROM code_chunks
                 WHERE repo = :repo
                 ORDER BY embedding <=> CAST(:emb AS vector)
                 LIMIT :k
-                """
-            ),
+                """),
             {"repo": repo, "emb": to_vector_literal(embedding), "k": top_k},
         )
         return [row.symbol for row in result]

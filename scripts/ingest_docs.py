@@ -88,12 +88,10 @@ async def main() -> None:
         for chunk_index, (path, symbol, content) in enumerate(CHUNKS):
             embedding = await embed_text(content, settings)
             await session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO code_chunks (repo, path, symbol, chunk_index, content, embedding)
                     VALUES (:repo, :path, :symbol, :chunk_index, :content, CAST(:emb AS vector))
-                    """
-                ),
+                    """),
                 {
                     "repo": REPO,
                     "path": path,

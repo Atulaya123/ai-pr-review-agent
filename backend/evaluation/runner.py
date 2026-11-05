@@ -41,11 +41,16 @@ async def compute_retrieval_metrics(settings: Settings) -> RetrievalMetrics:
         mrr_inputs.append((retrieved, case.relevant_symbols))
         cases.append(
             RetrievalCaseResult(
-                query=case.query, retrieved=retrieved, relevant=case.relevant_symbols, recall_at_3=recall
+                query=case.query,
+                retrieved=retrieved,
+                relevant=case.relevant_symbols,
+                recall_at_3=recall,
             )
         )
     mean_recall = sum(c.recall_at_3 for c in cases) / len(cases) if cases else 1.0
-    return RetrievalMetrics(cases=cases, mean_recall_at_3=mean_recall, mrr=mean_reciprocal_rank(mrr_inputs))
+    return RetrievalMetrics(
+        cases=cases, mean_recall_at_3=mean_recall, mrr=mean_reciprocal_rank(mrr_inputs)
+    )
 
 
 @dataclass(frozen=True)

@@ -58,15 +58,16 @@ class Settings(BaseSettings):
     hitl_confidence_threshold: float = 0.93
 
     # economics
-    daily_budget_usd: float = 5.0
+    daily_budget_usd: float = Field(default=5.0, ge=0)
+    daily_judge_budget_usd: float = Field(default=5.0, ge=0)
+    llm_max_output_tokens: int = Field(default=2048, gt=0)
 
     webhook_max_body_bytes: int = 2_000_000
 
     # mcp — Phase 1 auth only (shared secret in front of /mcp). Unset means
     # "don't mount /mcp at all" (see backend/mcp_server/server.py) — fails
     # closed rather than exposing tools with no auth. review_diff (Phase 2,
-    # not built yet) triggers real LLM cost with daily_budget_usd still
-    # unenforced, so this can never default to open.
+    # not built yet) triggers real LLM cost, so this can never default to open.
     mcp_shared_secret: str | None = None
     # The mcp SDK enables DNS-rebinding Host-header protection by default
     # with an empty allowed_hosts list, which — confirmed against a real

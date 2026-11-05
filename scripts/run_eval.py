@@ -36,7 +36,9 @@ async def run_generation_eval(settings) -> None:
     for case in metrics.cases:
         f_mark = "OK" if case.supported == case.expected_supported else "UNEXPECTED"
         r_mark = "OK" if case.relevant == case.expected_relevant else "UNEXPECTED"
-        print(f"  [{case.name}] supported={case.supported} ({f_mark})  relevant={case.relevant} ({r_mark})")
+        print(
+            f"  [{case.name}] supported={case.supported} ({f_mark})  relevant={case.relevant} ({r_mark})"
+        )
 
     print(f"\n  Faithfulness rate: {metrics.faithfulness_rate:.2f}")
     print(f"  Relevance rate:    {metrics.relevance_rate:.2f}")

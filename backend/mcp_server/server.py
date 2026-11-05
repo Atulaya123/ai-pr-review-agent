@@ -5,8 +5,8 @@ instead of only this repo's own LangGraph pipeline being able to use them.
 Phase 1 only: the two read-only tools, gated by a shared secret (see
 auth.py). review_diff (the LLM-cost tool) is deliberately not exposed yet —
 Phase 2 gates it behind OAuth 2.1 + audience-bound GitHub token validation,
-since daily_budget_usd still isn't enforced and an open endpoint able to
-trigger the full 4-specialist LangGraph fan-out is an uncapped bill.
+since an unauthenticated endpoint able to trigger the full 4-specialist
+LangGraph fan-out could consume the configured daily model budget.
 """
 
 import logging

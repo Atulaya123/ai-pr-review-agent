@@ -8,13 +8,17 @@ Run with: python -m scripts.init_db
 import asyncio
 
 from backend.database.models import Base
+from backend.database.pricing import seed_initial_prices
 from backend.database.session import get_engine
+from backend.database.session import get_sessionmaker
 
 
 async def main() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with get_sessionmaker()() as session:
+        await seed_initial_prices(session)
     print("tables created")
 
 

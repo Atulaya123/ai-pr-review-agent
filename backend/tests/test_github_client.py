@@ -36,14 +36,18 @@ def test_app_jwt_falls_back_to_file_path(tmp_path):
     pem = _generate_test_pem()
     key_path = tmp_path / "key.pem"
     key_path.write_text(pem)
-    settings = Settings(github_app_id="12345", github_private_key=None, github_private_key_path=str(key_path))
+    settings = Settings(
+        github_app_id="12345", github_private_key=None, github_private_key_path=str(key_path)
+    )
     token = GitHubClient(settings)._app_jwt()
     decoded = jwt.decode(token, options={"verify_signature": False})
     assert decoded["iss"] == "12345"
 
 
 def test_app_jwt_raises_without_any_key_configured():
-    settings = Settings(github_app_id="12345", github_private_key=None, github_private_key_path=None)
+    settings = Settings(
+        github_app_id="12345", github_private_key=None, github_private_key_path=None
+    )
     with pytest.raises(RuntimeError):
         GitHubClient(settings)._app_jwt()
 

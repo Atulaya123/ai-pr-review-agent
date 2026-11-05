@@ -152,6 +152,28 @@ vector-math over what this run just ingested, so a drop is a real signal. The ge
 a fixed adversarial fixture unrelated to today's ingested content, so gating the DAG on them would
 be gating on judge noise rather than anything this run actually touched.
 
+## Prompt configuration comparison
+
+The offline replay suite runs in GitHub Actions on pushes and pull requests:
+`mypy backend`, `black --check backend scripts`, and
+`pytest -q backend/evaluation/test_replay.py`. Replays use recorded model outputs and fail if
+the current prompt hash differs from the fixture.
+
+To compare a candidate specialist prompt with the current prompt on the same recorded fixture
+inputs, install `backend/requirements-dev.txt`, configure the active provider and its required
+credentials, then run:
+
+```bash
+PYTHONPATH=. python -m scripts.compare_replays \
+  --agent security \
+  --candidate-prompt /path/to/candidate-security.txt
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Each MLflow run stores an immutable behavior manifest, prompt hashes, per-fixture findings, and
+separate finding-quality, escalation, latency, cost, and coverage metrics. This comparison makes
+live model calls; only the replay suite is provider-free.
+
 No Docker needed to run this locally — see [`airflow/README.md`](airflow/README.md) for the
 exact setup (a plain venv + `airflow standalone`), which was used to verify the DAG parses and
 executes under real Airflow 3.1 before this was written up here.

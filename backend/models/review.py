@@ -20,6 +20,7 @@ class ReviewRequest(BaseModel):
     installation_id: int | None = None
     head_sha: str
     files: list[DiffFile]
+    commit_messages: list[str] = Field(default_factory=list)
 
 
 class ReviewResult(BaseModel):

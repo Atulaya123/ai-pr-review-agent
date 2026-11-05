@@ -39,7 +39,9 @@ async def score_faithfulness(
     finding: Finding, context: str, llm_client: LLMClient, *, model: str
 ) -> tuple[bool, str]:
     user = f"CONTEXT:\n{context or '(no context retrieved)'}\n\nFINDING RATIONALE:\n{finding.rationale}"
-    response = await llm_client.complete_json(system=FAITHFULNESS_SYSTEM_PROMPT, user=user, model=model)
+    response = await llm_client.complete_json(
+        system=FAITHFULNESS_SYSTEM_PROMPT, user=user, model=model, purpose="judge"
+    )
     verdict = json.loads(response.text)
     return bool(verdict.get("supported", False)), verdict.get("reasoning", "")
 
@@ -51,7 +53,9 @@ async def score_relevance(
         f"DIFF:\n{diff_text}\n\nFINDING:\n{finding.summary} "
         f"({finding.file_path}:{finding.line_start})\nRATIONALE:\n{finding.rationale}"
     )
-    response = await llm_client.complete_json(system=RELEVANCE_SYSTEM_PROMPT, user=user, model=model)
+    response = await llm_client.complete_json(
+        system=RELEVANCE_SYSTEM_PROMPT, user=user, model=model, purpose="judge"
+    )
     verdict = json.loads(response.text)
     return bool(verdict.get("relevant", False)), verdict.get("reasoning", "")
 

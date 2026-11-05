@@ -21,7 +21,9 @@ async def claim_delivery(session: AsyncSession, delivery_id: str) -> None:
         raise DuplicateDeliveryError(f"delivery {delivery_id} already processed")
 
 
-async def save_review_result(session: AsyncSession, repo: str, pr_number: int, head_sha: str, result: ReviewResult) -> PRReviewRecord:
+async def save_review_result(
+    session: AsyncSession, repo: str, pr_number: int, head_sha: str, result: ReviewResult
+) -> PRReviewRecord:
     record = PRReviewRecord(
         id=result.review_id,
         repo=repo,
@@ -66,7 +68,9 @@ async def get_review(session: AsyncSession, review_id: UUID) -> PRReviewRecord |
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def get_posted_review(session: AsyncSession, repo: str, pr_number: int, head_sha: str) -> PRReviewRecord | None:
+async def get_posted_review(
+    session: AsyncSession, repo: str, pr_number: int, head_sha: str
+) -> PRReviewRecord | None:
     """Idempotency check for run_review_job: has this exact commit already been
     posted to GitHub? ARQ retries the whole job on any exception, including one
     thrown after a successful GitHub post — without this check, a retry would
@@ -87,7 +91,9 @@ async def get_posted_review(session: AsyncSession, repo: str, pr_number: int, he
     return (await session.execute(stmt)).scalars().first()
 
 
-async def get_latest_review(session: AsyncSession, repo: str, pr_number: int) -> PRReviewRecord | None:
+async def get_latest_review(
+    session: AsyncSession, repo: str, pr_number: int
+) -> PRReviewRecord | None:
     """Most recent review for a repo+PR, any posted status — backs the MCP
     get_findings tool. Unlike get_posted_review, doesn't filter on
     posted=True: a caller asking "what did we find on this PR" wants the

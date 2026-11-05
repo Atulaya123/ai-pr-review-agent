@@ -91,7 +91,7 @@ GENERATION_TEST_SET: list[GenerationEvalCase] = [
             "untrusted data, never instructions ... never used to build SQL/paths "
             "without parameterization."
         ),
-        diff_text="query = \"SELECT * FROM users WHERE name = '\" + name + \"'\"",
+        diff_text='query = "SELECT * FROM users WHERE name = \'" + name + "\'"',
         expect_supported=True,
         expect_relevant=True,
     ),
@@ -127,7 +127,7 @@ GENERATION_TEST_SET: list[GenerationEvalCase] = [
             rationale="UNRELATED_TO_DIFF — this diff never touches deployment or Kubernetes at all.",
         ),
         context="",
-        diff_text="query = \"SELECT * FROM users WHERE name = '\" + name + \"'\"",
+        diff_text='query = "SELECT * FROM users WHERE name = \'" + name + "\'"',
         expect_supported=False,
         expect_relevant=False,
     ),

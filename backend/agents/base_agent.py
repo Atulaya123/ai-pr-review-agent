@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from uuid import UUID
 
 from backend.models.enums import AgentType, Severity
@@ -11,7 +12,7 @@ from backend.prompts.registry import get_system_prompt
 from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
 from backend.reliability.timeout import LLM_TIMEOUT_S, with_timeout
-from backend.security.injection_guard import detect_injection_attempt, fence_untrusted_content
+from backend.security.injection_guard import fence_untrusted_content, sanitize_review_request
 from backend.core.config import get_settings
 from backend.tools.llm_client import LLMClient
 
@@ -52,42 +53,76 @@ class SpecialistAgent:
         self.model = model or resolve_model_for_provider(get_settings().llm_provider)
 
     def _build_user_prompt(self, request: ReviewRequest, retrieved_context: str) -> str:
-        diff_text = "\n".join(f"--- {f.path} ---\n{f.patch}" for f in request.files)
+        sanitized = sanitize_review_request(request)
+        diff_text = "\n".join(
+            f"--- {path} ---\n{file.patch}"
+            for path, file in zip(sanitized.prompt_paths, sanitized.request.files)
+        )
         parts = [fence_untrusted_content("diff", diff_text)]
+        if sanitized.request.commit_messages:
+            parts.append(
+                fence_untrusted_content(
+                    "commit_messages",
+                    "\n\n".join(sanitized.request.commit_messages),
+                )
+            )
         if retrieved_context:
             parts.append(fence_untrusted_content("codebase_context", retrieved_context))
         return "\n\n".join(parts)
 
     async def review(self, request: ReviewRequest, retrieved_context: str = "") -> list[Finding]:
-        span_start = time.monotonic()
         await emit_agent_event(request.review_id, self.agent_type, "span.start")
 
         system = get_system_prompt(self.agent_type.value)
         user = self._build_user_prompt(request, retrieved_context)
 
-        injection_hits = detect_injection_attempt(user)
-        if injection_hits and self.agent_type == AgentType.SECURITY:
-            # the security specialist itself flags injection attempts in the diff
-            pass  # surfaced as part of its own findings via the LLM's judgment
-
         async def _call():
-            return await with_timeout(
-                self.llm_client.complete_json(system=system, user=user, model=self.model),
-                timeout_s=LLM_TIMEOUT_S,
+            call_start_ns = time.monotonic_ns()
+            call_started_at = datetime.now(timezone.utc)
+            try:
+                response = await with_timeout(
+                    self.llm_client.complete_json(
+                        system=system,
+                        user=user,
+                        model=self.model,
+                        max_output_tokens=get_settings().llm_max_output_tokens,
+                        review_id=request.review_id,
+                        agent=self.agent_type.value,
+                    ),
+                    timeout_s=LLM_TIMEOUT_S,
+                )
+            except Exception:
+                await emit_agent_event(
+                    request.review_id,
+                    self.agent_type,
+                    "llm.call",
+                    model=self.model,
+                    latency_ms=int((time.monotonic_ns() - call_start_ns) / 1_000_000),
+                    outcome="error",
+                    payload={
+                        "started_at_utc": call_started_at.isoformat(),
+                        "duration_clock": "monotonic",
+                    },
+                )
+                raise
+            await emit_agent_event(
+                request.review_id,
+                self.agent_type,
+                "llm.call",
+                model=response.model,
+                tokens_in=response.tokens_in,
+                tokens_out=response.tokens_out,
+                cost_usd=response.cost_usd,
+                latency_ms=int((time.monotonic_ns() - call_start_ns) / 1_000_000),
+                outcome="success",
+                payload={
+                    "started_at_utc": call_started_at.isoformat(),
+                    "duration_clock": "monotonic",
+                },
             )
+            return response
 
         response = await _breaker.call(lambda: retry_with_backoff(_call, max_attempts=3))
-
-        await emit_agent_event(
-            request.review_id,
-            self.agent_type,
-            "llm.call",
-            model=response.model,
-            tokens_in=response.tokens_in,
-            tokens_out=response.tokens_out,
-            cost_usd=response.cost_usd,
-            latency_ms=int((time.monotonic() - span_start) * 1000),
-        )
 
         findings = self._parse_findings(response.text, request)
         await emit_agent_event(request.review_id, self.agent_type, "span.end")
@@ -99,22 +134,28 @@ class SpecialistAgent:
         except json.JSONDecodeError:
             logger.warning(
                 "%s agent returned non-JSON response for review %s, treating as zero findings: %r",
-                self.agent_type.value, request.review_id, raw_text[:500],
+                self.agent_type.value,
+                request.review_id,
+                raw_text[:500],
             )
             return []
 
+        safe_file_paths = sanitize_review_request(request).prompt_paths
+        path_map = {safe_path: file.path for safe_path, file in zip(safe_file_paths, request.files)}
         findings = []
         for item in data.get("findings", []):
             try:
+                file_path = item["file_path"]
                 findings.append(
                     Finding(
                         agent_type=self.agent_type,
                         severity=Severity(item["severity"]),
                         category=item["category"],
                         summary=item["summary"],
-                        file_path=item["file_path"],
+                        file_path=path_map.get(file_path, file_path),
                         line_start=item["line_start"],
                         line_end=item["line_end"],
+                        evidence=item.get("evidence"),
                         suggestion=item.get("suggestion"),
                         confidence=item["confidence"],
                         rationale=item["rationale"],
@@ -123,7 +164,10 @@ class SpecialistAgent:
             except (KeyError, ValueError) as exc:
                 logger.warning(
                     "%s agent produced a malformed finding for review %s, dropping it: %s — %r",
-                    self.agent_type.value, request.review_id, exc, item,
+                    self.agent_type.value,
+                    request.review_id,
+                    exc,
+                    item,
                 )
                 continue  # a malformed finding from the LLM should not sink the whole review
         return findings

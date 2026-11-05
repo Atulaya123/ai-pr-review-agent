@@ -16,7 +16,9 @@ def test_langsmith_without_api_key_yields_no_env_vars():
 
 
 def test_langsmith_enabled_with_key_yields_both_var_generations():
-    settings = Settings(AIPR_LANGSMITH_TRACING=True, langsmith_api_key="fake-key", langsmith_project="my-project")
+    settings = Settings(
+        AIPR_LANGSMITH_TRACING=True, langsmith_api_key="fake-key", langsmith_project="my-project"
+    )
     env = _langsmith_env_vars(settings)
 
     assert env["LANGCHAIN_TRACING_V2"] == "true"

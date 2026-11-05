@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,7 @@ from backend.integrations.diff_parser import parse_unified_diff
 from backend.integrations.github_client import GitHubClient
 from backend.job_queue.arq_worker import get_redis_pool
 from backend.models.webhook import PullRequestPayload
+from backend.observability.timing import clock_domain_id, monotonic_now_ns
 from backend.webhook_receiver.validator import validate_and_claim
 
 logger = logging.getLogger(__name__)
@@ -58,11 +61,22 @@ async def receive_webhook(
             )
             files = [f.model_dump() for f in parse_unified_diff(diff_text)]
         except Exception:
-            logger.exception("failed to fetch diff for %s#%s, enqueuing with no files", payload.repo_full_name, payload.number)
+            logger.exception(
+                "failed to fetch diff for %s#%s, enqueuing with no files",
+                payload.repo_full_name,
+                payload.number,
+            )
 
     pool = await get_redis_pool()
+    request_id = uuid4()
+    enqueued_at_utc = datetime.now(timezone.utc).isoformat()
+    enqueued_monotonic_ns = monotonic_now_ns()
     await pool.enqueue_job(
         "run_review_job",
+        review_id=str(request_id),
+        enqueued_at_utc=enqueued_at_utc,
+        enqueued_monotonic_ns=enqueued_monotonic_ns,
+        enqueue_clock_domain=clock_domain_id(),
         repo=payload.repo_full_name,
         pr_number=payload.number,
         installation_id=payload.installation_id,

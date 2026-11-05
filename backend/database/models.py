@@ -1,7 +1,20 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -16,7 +29,9 @@ class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
 
     delivery_id: Mapped[str] = mapped_column(String, primary_key=True)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class PRReviewRecord(Base):
@@ -98,3 +113,49 @@ class AgentEvent(Base):
     outcome: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class PriceVersion(Base):
+    __tablename__ = "price_versions"
+    __table_args__ = (
+        UniqueConstraint("provider", "model", "effective_from", name="uq_price_versions_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    input_rate_per_million: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    cached_input_rate_per_million: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    output_rate_per_million: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ModelCall(Base):
+    __tablename__ = "model_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    price_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("price_versions.id"), nullable=False, index=True
+    )
+    purpose: Mapped[str] = mapped_column(String, nullable=False, default="agent")
+    review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    output_tokens_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    raw_usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(20, 12), nullable=True)
+    reserved_cost_usd: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="reserved")

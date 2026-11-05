@@ -6,6 +6,10 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
+.mlflow/
+mlflow.db*
+mlartifacts/
+mlruns/
 node_modules/
 .next/
 *.egg-info/

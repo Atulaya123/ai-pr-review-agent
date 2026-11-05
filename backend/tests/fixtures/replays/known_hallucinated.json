@@ -1,0 +1,45 @@
+{
+  "fixture_set_version": "2026-11-04.1",
+  "provenance": "reconstructed from the documented PR #15 citation hallucination",
+  "name": "known_hallucinated",
+  "provider": "groq",
+  "model_identifier": "openai/gpt-oss-120b",
+  "prompt_hash": "2acfe4f539bb23e7fd0a3694b4c7e6696ba3d86cc75f06699cfe605a59436d92",
+  "request": {
+    "review_id": "10000000-0000-4000-8000-000000000003",
+    "repo": "acme/replay-fixtures",
+    "pr_number": 3,
+    "head_sha": "known-hallucinated-sha",
+    "files": [
+      {
+        "path": "utils.py",
+        "patch": "diff --git a/utils.py b/utils.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b"
+      }
+    ],
+    "commit_messages": []
+  },
+  "retrieved_context": "",
+  "model_responses": {
+    "security": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 80, "tokens_out": 4, "raw_usage": {"prompt_tokens": 80, "completion_tokens": 4}},
+    "quality": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 80, "tokens_out": 4, "raw_usage": {"prompt_tokens": 80, "completion_tokens": 4}},
+    "tests": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 80, "tokens_out": 4, "raw_usage": {"prompt_tokens": 80, "completion_tokens": 4}},
+    "docs": {"text": "{\"findings\": [{\"severity\": \"MEDIUM\", \"category\": \"documentation\", \"summary\": \"retrieve_context and get_findings may lack docstrings\", \"file_path\": \"backend/mcp_server/__init__.py\", \"line_start\": 1, \"line_end\": 1, \"confidence\": 0.78, \"rationale\": \"The cited module appears to define these functions without docstrings.\"}]}", "model": "openai/gpt-oss-120b", "tokens_in": 90, "tokens_out": 50, "raw_usage": {"prompt_tokens": 90, "completion_tokens": 50}}
+  },
+  "expected_findings": [
+    {
+      "agent_type": "docs",
+      "severity": "MEDIUM",
+      "category": "documentation",
+      "summary": "retrieve_context and get_findings may lack docstrings",
+      "file_path": "backend/mcp_server/__init__.py",
+      "line_start": 1,
+      "line_end": 1,
+      "evidence": null,
+      "suggestion": null,
+      "confidence": 0.0,
+      "rationale": "The cited module appears to define these functions without docstrings."
+    }
+  ],
+  "expected_overall_confidence": 0.0,
+  "expected_outcome": "escalated"
+}

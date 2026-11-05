@@ -1,0 +1,31 @@
+{
+  "fixture_set_version": "2026-11-04.1",
+  "provenance": "reconstructed from the existing known-good evaluation case",
+  "name": "known_good",
+  "provider": "groq",
+  "model_identifier": "openai/gpt-oss-120b",
+  "prompt_hash": "23e910dfd15c18e7654d7c1d2098f10086cb13626ff778517a892b087e2f04c3",
+  "request": {
+    "review_id": "10000000-0000-4000-8000-000000000001",
+    "repo": "acme/replay-fixtures",
+    "pr_number": 1,
+    "head_sha": "known-good-sha",
+    "files": [
+      {
+        "path": "utils.py",
+        "patch": "diff --git a/utils.py b/utils.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b"
+      }
+    ],
+    "commit_messages": []
+  },
+  "retrieved_context": "Simple arithmetic helper functions.",
+  "model_responses": {
+    "security": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 88, "tokens_out": 4, "raw_usage": {"prompt_tokens": 88, "completion_tokens": 4}},
+    "quality": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 88, "tokens_out": 4, "raw_usage": {"prompt_tokens": 88, "completion_tokens": 4}},
+    "tests": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 88, "tokens_out": 4, "raw_usage": {"prompt_tokens": 88, "completion_tokens": 4}},
+    "docs": {"text": "{\"findings\": []}", "model": "openai/gpt-oss-120b", "tokens_in": 88, "tokens_out": 4, "raw_usage": {"prompt_tokens": 88, "completion_tokens": 4}}
+  },
+  "expected_findings": [],
+  "expected_overall_confidence": 1.0,
+  "expected_outcome": "approved"
+}

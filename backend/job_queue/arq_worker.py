@@ -1,12 +1,13 @@
 import logging
+from datetime import datetime, timezone
 from functools import lru_cache
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from backend.core.config import get_settings
-from backend.core.workflow_engine import get_workflow_engine
+from backend.core.workflow_engine import WorkflowEngine, get_workflow_engine
 from backend.database.repository import enqueue_hitl_review, get_posted_review, save_review_result
 from backend.database.session import get_sessionmaker
 from backend.integrations.diff_parser import get_valid_line_range
@@ -14,6 +15,13 @@ from backend.integrations.github_client import GitHubClient
 from backend.models.enums import ReviewOutcome
 from backend.models.findings import Finding
 from backend.models.review import DiffFile, ReviewRequest, ReviewResult
+from backend.observability.events import emit_agent_event
+from backend.observability.timing import (
+    clock_domain_id,
+    elapsed_ms,
+    monotonic_now_ns,
+    queue_elapsed_ms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +49,13 @@ def _clamp_findings_to_diff(findings: list[Finding], files: list[DiffFile]) -> l
         if (new_start, new_end) != (finding.line_start, finding.line_end):
             logger.warning(
                 "clamped finding line range for %s from (%s,%s) to (%s,%s) — outside diff bounds (%s,%s)",
-                finding.file_path, finding.line_start, finding.line_end, new_start, new_end, lo, hi,
+                finding.file_path,
+                finding.line_start,
+                finding.line_end,
+                new_start,
+                new_end,
+                lo,
+                hi,
             )
         clamped.append(finding.model_copy(update={"line_start": new_start, "line_end": new_end}))
     return clamped
@@ -68,36 +82,100 @@ async def run_review_job(
     installation_id: int | None,
     head_sha: str,
     files: list[dict],
+    review_id: str | None = None,
+    enqueued_at_utc: str | None = None,
+    enqueued_monotonic_ns: int | None = None,
+    enqueue_clock_domain: str | None = None,
 ) -> str:
     """The ARQ task the worker executes for every enqueued review.
 
     ctx["github_client"] / ctx["workflow_engine"] are injected in on_startup so
     tests can substitute fakes without monkeypatching module globals.
     """
-    async with get_sessionmaker()() as session:
-        already_posted = await get_posted_review(session, repo, pr_number, head_sha)
-    if already_posted is not None:
-        # ARQ retries this whole job on any exception, including one thrown
-        # after a successful GitHub post (see docs/INTERVIEW_PREP.md bug #6) —
-        # without this guard, a retry re-runs the LLM pipeline and re-posts a
-        # duplicate review/comment for a commit already handled.
-        logger.info(
-            "review already posted for %s#%s @ %s (review_id=%s) — skipping duplicate run",
-            repo, pr_number, head_sha, already_posted.id,
-        )
-        return str(already_posted.id)
-
-    github: GitHubClient = ctx.get("github_client") or GitHubClient()
-    engine = ctx.get("workflow_engine") or get_workflow_engine()
-
+    started_ns = monotonic_now_ns()
+    started_at = datetime.now(timezone.utc)
     request = ReviewRequest(
+        review_id=UUID(review_id) if review_id is not None else uuid4(),
         repo=repo,
         pr_number=pr_number,
         installation_id=installation_id,
         head_sha=head_sha,
         files=[DiffFile(**f) for f in files],
     )
+    if enqueued_monotonic_ns is not None and enqueue_clock_domain is not None:
+        queue_ms = queue_elapsed_ms(enqueued_monotonic_ns, enqueue_clock_domain, started_ns)
+    else:
+        queue_ms = None
+    picked_up_at = datetime.now(timezone.utc)
 
+    outcome = "success"
+    try:
+        await emit_agent_event(
+            request.review_id,
+            "worker",
+            "queue.complete",
+            occurred_at=picked_up_at,
+            latency_ms=queue_ms,
+            outcome="measured" if queue_ms is not None else "unavailable",
+            payload={
+                "enqueued_at_utc": enqueued_at_utc,
+                "picked_up_at_utc": picked_up_at.isoformat(),
+                "enqueue_clock_domain": enqueue_clock_domain,
+                "worker_clock_domain": clock_domain_id(),
+                "duration_clock": "monotonic",
+            },
+        )
+        async with get_sessionmaker()() as session:
+            already_posted = await get_posted_review(session, repo, pr_number, head_sha)
+        if already_posted is not None:
+            logger.info(
+                "review already posted for %s#%s @ %s (review_id=%s) — skipping duplicate run",
+                repo,
+                pr_number,
+                head_sha,
+                already_posted.id,
+            )
+            outcome = "duplicate"
+            return str(already_posted.id)
+
+        github: GitHubClient = ctx.get("github_client") or GitHubClient()
+        engine = ctx.get("workflow_engine") or get_workflow_engine()
+        return await _execute_review_job(
+            request=request,
+            engine=engine,
+            github=github,
+            repo=repo,
+            pr_number=pr_number,
+            installation_id=installation_id,
+            head_sha=head_sha,
+        )
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        await emit_agent_event(
+            request.review_id,
+            "worker",
+            "worker.active",
+            latency_ms=elapsed_ms(started_ns),
+            outcome=outcome,
+            payload={
+                "started_at_utc": started_at.isoformat(),
+                "duration_clock": "monotonic",
+            },
+        )
+
+
+async def _execute_review_job(
+    *,
+    request: ReviewRequest,
+    engine: WorkflowEngine,
+    github: GitHubClient,
+    repo: str,
+    pr_number: int,
+    installation_id: int | None,
+    head_sha: str,
+) -> str:
     final_state = await engine.run(
         str(request.review_id),
         {
@@ -123,10 +201,6 @@ async def run_review_job(
     if installation_id is not None:
         try:
             if result.outcome == ReviewOutcome.ESCALATED:
-                # The HITL queue *is* the PR: a comment plus a label a human
-                # can filter on, not a separate table nobody reads (see
-                # request_human_review's docstring for why this replaced a
-                # silent no-op here).
                 await github.request_human_review(
                     repo,
                     pr_number,
@@ -135,10 +209,15 @@ async def run_review_job(
                     findings=result.findings,
                 )
             else:
-                await github.post_review(repo, pr_number, installation_id, result.findings, result.outcome)
+                await github.post_review(
+                    repo, pr_number, installation_id, result.findings, result.outcome
+                )
             result.posted = True
         except Exception:
             logger.exception("failed to post review for %s#%s", repo, pr_number)
+
+    async with get_sessionmaker()() as session:
+        await save_review_result(session, repo, pr_number, head_sha, result)
 
     if result.outcome == ReviewOutcome.ESCALATED:
         async with get_sessionmaker()() as session:
@@ -147,9 +226,13 @@ async def run_review_job(
                 request.review_id,
                 reason=f"overall_confidence {result.overall_confidence:.2f} below threshold",
             )
-
-    async with get_sessionmaker()() as session:
-        await save_review_result(session, repo, pr_number, head_sha, result)
+        await emit_agent_event(
+            request.review_id,
+            "hitl",
+            "hitl.wait.started",
+            outcome="pending",
+            payload={"reason": "finding escalated; awaiting external human review"},
+        )
 
     return str(request.review_id)
 

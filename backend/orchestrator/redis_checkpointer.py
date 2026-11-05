@@ -99,7 +99,9 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
             # LangGraph's checkpoint format — plain pickle is fine and avoids
             # ambiguity about which serde type tag it needs.
             task_id, channel, value_type, value_bytes, _task_path = pickle.loads(envelope)
-            pending_writes.append((task_id, channel, self.serde.loads_typed((value_type, value_bytes))))
+            pending_writes.append(
+                (task_id, channel, self.serde.loads_typed((value_type, value_bytes)))
+            )
 
         return CheckpointTuple(
             config={
@@ -112,7 +114,13 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
             checkpoint=checkpoint,
             metadata=metadata,
             parent_config=(
-                {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": parent_id_str}}
+                {
+                    "configurable": {
+                        "thread_id": thread_id,
+                        "checkpoint_ns": ns,
+                        "checkpoint_id": parent_id_str,
+                    }
+                }
                 if parent_id_str
                 else None
             ),
@@ -180,7 +188,9 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         parent_id = config["configurable"].get("checkpoint_id")
 
         checkpoint_type, checkpoint_bytes = self.serde.dumps_typed(checkpoint)
-        metadata_type, metadata_bytes = self.serde.dumps_typed(get_checkpoint_metadata(config, metadata))
+        metadata_type, metadata_bytes = self.serde.dumps_typed(
+            get_checkpoint_metadata(config, metadata)
+        )
 
         mapping: dict[str, Any] = {
             "checkpoint_type": checkpoint_type,
