@@ -13,6 +13,8 @@ from backend.integrations.github_client import GitHubClient
 from backend.job_queue.arq_worker import get_redis_pool
 from backend.models.webhook import PullRequestPayload
 from backend.observability.timing import clock_domain_id, monotonic_now_ns
+from backend.observability.logging import log_stage
+from backend.models.review import ReviewRequest
 from backend.webhook_receiver.validator import validate_and_claim
 
 logger = logging.getLogger(__name__)
@@ -69,11 +71,20 @@ async def receive_webhook(
 
     pool = await get_redis_pool()
     request_id = uuid4()
+    log_request = ReviewRequest(
+        review_id=request_id,
+        repo=payload.repo_full_name,
+        pr_number=payload.number,
+        head_sha=payload.head_sha,
+        files=[],
+    )
     enqueued_at_utc = datetime.now(timezone.utc).isoformat()
     enqueued_monotonic_ns = monotonic_now_ns()
     await pool.enqueue_job(
         "run_review_job",
         review_id=str(request_id),
+        attempt_id=str(log_request.attempt_id),
+        trace_id=str(log_request.trace_id),
         enqueued_at_utc=enqueued_at_utc,
         enqueued_monotonic_ns=enqueued_monotonic_ns,
         enqueue_clock_domain=clock_domain_id(),
@@ -83,5 +94,6 @@ async def receive_webhook(
         head_sha=payload.head_sha,
         files=files,
     )
+    log_stage("review.enqueued", request=log_request, stage="enqueue")
 
     return {"status": "enqueued"}

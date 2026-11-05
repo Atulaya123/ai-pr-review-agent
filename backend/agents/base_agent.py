@@ -8,6 +8,8 @@ from backend.models.enums import AgentType, Severity
 from backend.models.findings import Finding
 from backend.models.review import ReviewRequest
 from backend.observability.events import emit_agent_event
+from backend.observability.logging import log_stage
+from backend.core.exceptions import StageExecutionError
 from backend.prompts.registry import get_system_prompt
 from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
@@ -111,7 +113,14 @@ class SpecialistAgent:
             )
         best: dict[tuple[str, int, int], Finding] = {}
         for chunk in chunks:
-            for finding in await self._review_chunk(chunk, retrieved_context):
+            try:
+                findings = await self._review_chunk(chunk, retrieved_context)
+            except Exception as exc:
+                log_stage(
+                    "model.failed", request=request, stage="model", agent=self.agent_type.value
+                )
+                raise StageExecutionError("model", exc) from exc
+            for finding in findings:
                 key = (finding.file_path, finding.line_start, finding.line_end)
                 previous = best.get(key)
                 if previous is None or finding.confidence > previous.confidence:
@@ -141,6 +150,7 @@ class SpecialistAgent:
                     payload={"duration_clock": "monotonic", "token_counts_estimated": True},
                 )
             call_start_ns = time.monotonic_ns()
+            log_stage("model.started", request=request, stage="model", agent=self.agent_type.value)
             call_started_at = datetime.now(timezone.utc)
             try:
                 response = await with_timeout(
@@ -183,11 +193,29 @@ class SpecialistAgent:
                     "duration_clock": "monotonic",
                 },
             )
+            log_stage(
+                "model.completed",
+                request=request,
+                stage="model",
+                agent=self.agent_type.value,
+                tokens_in=response.tokens_in,
+                tokens_out=response.tokens_out,
+                latency_ms=int((time.monotonic_ns() - call_start_ns) / 1_000_000),
+            )
             return response
 
         response = await _breaker.call(lambda: retry_with_backoff(_call, max_attempts=3))
 
-        return self._parse_findings(response.text, request)
+        findings = self._parse_findings(response.text, request)
+        for finding in findings:
+            log_stage(
+                "finding.proposed",
+                request=request,
+                stage="generation",
+                agent=self.agent_type.value,
+                finding_id=str(finding.id),
+            )
+        return findings
 
     def _parse_findings(self, raw_text: str, request: ReviewRequest) -> list[Finding]:
         try:

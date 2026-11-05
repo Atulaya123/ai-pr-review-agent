@@ -7,6 +7,7 @@ from backend.memory.embedder import embed_text
 from backend.memory.tiger_client import hybrid_search_chunks
 from backend.models.review import ReviewRequest
 from backend.observability.events import emit_agent_event
+from backend.observability.logging import log_stage
 from backend.observability.timing import elapsed_ms, monotonic_now_ns
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,11 @@ async def get_retrieved_context(request: ReviewRequest, top_k: int = 5) -> str:
             else diff_text
         )
         chunks = await hybrid_search_chunks(request.repo, embedding, sparse_document, top_k=top_k)
-    except Exception:
+    except Exception as exc:
         logger.exception("retrieval failed for %s, falling back to no context", request.repo)
+        log_stage(
+            "retrieval.failed", request=request, stage="retrieval", outcome=type(exc).__name__
+        )
         await emit_agent_event(
             request.review_id,
             AgentType.AGGREGATOR,

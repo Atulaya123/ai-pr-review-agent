@@ -18,12 +18,15 @@ _compiled_graph = build_review_graph().compile(checkpointer=_checkpointer)
 
 class LangGraphWorkflowEngine(WorkflowEngine):
     async def run(self, workflow_id: str, input: dict[str, Any]) -> dict[str, Any]:
-        config = {"configurable": {"thread_id": workflow_id}}
+        config = {
+            "configurable": {"thread_id": workflow_id},
+            "run_id": input["request"].trace_id,
+            "metadata": {"attempt_id": str(input["request"].attempt_id)},
+        }
         return await _compiled_graph.ainvoke(input, config=config)
 
     async def resume(self, workflow_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        config = {"configurable": {"thread_id": workflow_id}}
-        return await _compiled_graph.ainvoke(state, config=config)
+        return await self.run(workflow_id, state)
 
     async def get_state(self, workflow_id: str) -> dict[str, Any] | None:
         config = {"configurable": {"thread_id": workflow_id}}

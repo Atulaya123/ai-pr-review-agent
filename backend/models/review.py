@@ -15,6 +15,8 @@ class ReviewRequest(BaseModel):
     """Input to the orchestrator — everything a specialist needs about the PR."""
 
     review_id: UUID = Field(default_factory=uuid4)
+    attempt_id: UUID = Field(default_factory=uuid4)
+    trace_id: UUID = Field(default_factory=uuid4)
     repo: str
     pr_number: int
     installation_id: int | None = None

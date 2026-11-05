@@ -1,4 +1,5 @@
 import contextlib
+from logging.config import dictConfig
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
@@ -7,9 +8,11 @@ from backend.api.reviews import router as reviews_router
 from backend.core.config import get_settings
 from backend.mcp_server.server import build_mcp
 from backend.webhook_receiver.router import router as webhook_router
+from backend.observability.logging import WORKER_LOG_CONFIG
 
 
 def create_app() -> FastAPI:
+    dictConfig(WORKER_LOG_CONFIG)
     # Built before the FastAPI app itself so its session_manager.run() can be
     # entered by the app's own lifespan — see build_mcp's docstring for why a
     # bare app.mount() alone leaves the MCP session manager's task group

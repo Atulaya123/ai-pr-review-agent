@@ -2,6 +2,7 @@ from collections.abc import Iterator
 import logging
 import subprocess
 import sys
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -98,10 +99,11 @@ def test_render_worker_configuration_emits_retrieval_info_logs() -> None:
         text=True,
         check=True,
     )
-    assert (
-        "retrieval_lane_counts query_type=content mode=vector_only "
-        "vector_count=1 fulltext_count=0 overlap_count=0 fused_count=1"
-    ) in result.stderr
+    line = json.loads(result.stderr.strip())
+    assert line["event"] == "retrieval.lanes"
+    assert line["mode"] == "vector_only"
+    assert line["vector_count"] == 1
+    assert line["fulltext_count"] == 0
 
 
 @pytest.mark.parametrize("symbols", [False, True])

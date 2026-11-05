@@ -17,6 +17,7 @@ from backend.models.findings import Finding
 from backend.models.review import ReviewRequest
 from backend.prompts.registry import get_system_prompt
 from backend.security.injection_guard import sanitize_review_request
+from backend.observability.logging import review_log_context, log_stage
 from backend.tools.llm_client import LLMClient, LLMResponse
 
 REPLAY_AGENTS = (
@@ -122,6 +123,9 @@ async def run_replay_fixture(fixture: ReviewReplayFixture) -> ReplayResult:
         return None
 
     with ExitStack() as stack:
+        stack.enter_context(review_log_context(fixture.request))
+        log_stage("review.enqueued", stage="enqueue")
+        log_stage("worker.started", stage="pickup")
         stack.enter_context(
             patch.dict(
                 os.environ,
@@ -163,7 +167,8 @@ async def run_replay_fixture(fixture: ReviewReplayFixture) -> ReplayResult:
                 "findings": [],
                 "overall_confidence": 1.0,
                 "outcome": ReviewOutcome.APPROVED,
-            }
+            },
+            config={"run_id": fixture.request.trace_id},
         )
 
     return ReplayResult(

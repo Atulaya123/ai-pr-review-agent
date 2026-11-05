@@ -11,6 +11,7 @@ from backend.memory.context_retriever import get_retrieved_context
 from backend.models.enums import AgentType
 from backend.models.findings import Finding
 from backend.observability.events import emit_agent_event
+from backend.observability.logging import log_stage
 from backend.observability.timing import elapsed_ms, monotonic_now_ns
 from backend.orchestrator.state import ReviewState
 from backend.security.injection_guard import sanitize_review_request
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 async def build_context(state: ReviewState) -> dict:
+    log_stage("retrieval.started", request=state["request"], stage="retrieval")
     sanitized = sanitize_review_request(state["request"])
     report = sanitized.report
     await emit_agent_event(
@@ -47,6 +49,12 @@ async def build_context(state: ReviewState) -> dict:
         },
     )
     context = await get_retrieved_context(sanitized.request)
+    log_stage(
+        "retrieval.completed",
+        request=state["request"],
+        stage="retrieval",
+        outcome="context" if context else "empty",
+    )
     return {"request": sanitized.request, "retrieved_context": context}
 
 
@@ -123,6 +131,13 @@ async def aggregate_node(state: ReviewState) -> dict:
         verification = verify_finding_citation(
             finding, request.files, repository_files, repository_lookup_failures
         )
+        log_stage(
+            "finding.verified",
+            request=request,
+            stage="verification",
+            finding_id=str(finding.id),
+            outcome="verified" if verification.verified else "failed",
+        )
         if verification.verified:
             verified_findings.append(finding)
             continue
@@ -145,6 +160,14 @@ async def aggregate_node(state: ReviewState) -> dict:
     gate_started_ns = monotonic_now_ns()
     gate_started_at = datetime.now(timezone.utc)
     overall_confidence, outcome = apply_hitl_gate(merged)
+    log_stage(
+        "gate.decided",
+        request=request,
+        stage="gate",
+        outcome=outcome.value,
+        confidence=overall_confidence,
+        finding_ids=[str(finding.id) for finding in merged],
+    )
     await emit_agent_event(
         state["request"].review_id,
         AgentType.AGGREGATOR,

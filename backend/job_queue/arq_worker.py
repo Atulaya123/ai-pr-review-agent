@@ -16,6 +16,8 @@ from backend.models.enums import ReviewOutcome
 from backend.models.findings import Finding
 from backend.models.review import DiffFile, ReviewRequest, ReviewResult
 from backend.observability.events import emit_agent_event
+from backend.observability.logging import log_stage, review_log_context
+from backend.core.exceptions import StageExecutionError
 from backend.observability.timing import (
     clock_domain_id,
     elapsed_ms,
@@ -83,6 +85,8 @@ async def run_review_job(
     head_sha: str,
     files: list[dict],
     review_id: str | None = None,
+    attempt_id: str | None = None,
+    trace_id: str | None = None,
     enqueued_at_utc: str | None = None,
     enqueued_monotonic_ns: int | None = None,
     enqueue_clock_domain: str | None = None,
@@ -96,6 +100,10 @@ async def run_review_job(
     started_at = datetime.now(timezone.utc)
     request = ReviewRequest(
         review_id=UUID(review_id) if review_id is not None else uuid4(),
+        attempt_id=(
+            UUID(attempt_id) if attempt_id is not None and ctx.get("job_try", 1) == 1 else uuid4()
+        ),
+        trace_id=UUID(trace_id) if trace_id is not None else uuid4(),
         repo=repo,
         pr_number=pr_number,
         installation_id=installation_id,
@@ -107,6 +115,13 @@ async def run_review_job(
     else:
         queue_ms = None
     picked_up_at = datetime.now(timezone.utc)
+    log_stage(
+        "queue.completed",
+        request=request,
+        stage="queue",
+        latency_ms=queue_ms,
+        outcome="measured" if queue_ms is not None else "unavailable",
+    )
 
     outcome = "success"
     try:
@@ -123,6 +138,8 @@ async def run_review_job(
                 "enqueue_clock_domain": enqueue_clock_domain,
                 "worker_clock_domain": clock_domain_id(),
                 "duration_clock": "monotonic",
+                "attempt_id": str(request.attempt_id),
+                "trace_id": str(request.trace_id),
             },
         )
         async with get_sessionmaker()() as session:
@@ -153,6 +170,13 @@ async def run_review_job(
         outcome = "error"
         raise
     finally:
+        log_stage(
+            "worker.completed",
+            request=request,
+            stage="execution",
+            latency_ms=elapsed_ms(started_ns),
+            outcome=outcome,
+        )
         await emit_agent_event(
             request.review_id,
             "worker",
@@ -162,11 +186,43 @@ async def run_review_job(
             payload={
                 "started_at_utc": started_at.isoformat(),
                 "duration_clock": "monotonic",
+                "attempt_id": str(request.attempt_id),
+                "trace_id": str(request.trace_id),
             },
         )
 
 
 async def _execute_review_job(
+    *,
+    request: ReviewRequest,
+    engine: WorkflowEngine,
+    github: GitHubClient,
+    repo: str,
+    pr_number: int,
+    installation_id: int | None,
+    head_sha: str,
+) -> str:
+    with review_log_context(request):
+        log_stage("worker.started", stage="pickup")
+        try:
+            return await _execute_review_job_inner(
+                request=request,
+                engine=engine,
+                github=github,
+                repo=repo,
+                pr_number=pr_number,
+                installation_id=installation_id,
+                head_sha=head_sha,
+            )
+        except StageExecutionError as exc:
+            log_stage("worker.failed", stage=exc.stage, outcome=exc.cause_type)
+            raise
+        except Exception as exc:
+            log_stage("worker.failed", stage="workflow", outcome=type(exc).__name__)
+            raise StageExecutionError("workflow", exc) from exc
+
+
+async def _execute_review_job_inner(
     *,
     request: ReviewRequest,
     engine: WorkflowEngine,
@@ -213,11 +269,19 @@ async def _execute_review_job(
                     repo, pr_number, installation_id, result.findings, result.outcome
                 )
             result.posted = True
+            log_stage("github.posted", stage="posting", outcome=result.outcome.value)
         except Exception:
             logger.exception("failed to post review for %s#%s", repo, pr_number)
+            log_stage("github.failed", stage="posting", outcome="failed")
 
-    async with get_sessionmaker()() as session:
-        await save_review_result(session, repo, pr_number, head_sha, result)
+    try:
+        async with get_sessionmaker()() as session:
+            await save_review_result(session, repo, pr_number, head_sha, result)
+    except Exception as exc:
+        raise StageExecutionError("persistence", exc) from exc
+    log_stage(
+        "review.recorded", stage="persistence", finding_ids=[str(f.id) for f in result.findings]
+    )
 
     if result.outcome == ReviewOutcome.ESCALATED:
         async with get_sessionmaker()() as session:
@@ -232,6 +296,9 @@ async def _execute_review_job(
             "hitl.wait.started",
             outcome="pending",
             payload={"reason": "finding escalated; awaiting external human review"},
+        )
+        log_stage(
+            "hitl.enqueued", stage="human_queue", finding_ids=[str(f.id) for f in result.findings]
         )
 
     return str(request.review_id)

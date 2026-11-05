@@ -28,3 +28,10 @@ class CircuitOpenError(AIPRReviewError):
 
 class WorkflowExecutionError(AIPRReviewError):
     """The orchestrator failed to complete a review workflow."""
+
+
+class StageExecutionError(WorkflowExecutionError):
+    def __init__(self, stage: str, cause: Exception) -> None:
+        self.stage = stage
+        self.cause_type = type(cause).__name__
+        super().__init__(f"Review stage {stage} failed ({self.cause_type})")

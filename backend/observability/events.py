@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
+from backend.observability.logging import correlation_fields
 
 from backend.database.models import AgentEvent
 from backend.database.session import get_sessionmaker
@@ -30,6 +31,7 @@ async def emit_agent_event(
     """
     try:
         event_payload = dict(payload or {})
+        event_payload.update(correlation_fields())
         event_payload["behavior_versions"] = build_behavior_manifest(
             agent=agent.value if isinstance(agent, AgentType) else agent,
             model=model,

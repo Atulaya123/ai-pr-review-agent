@@ -231,6 +231,18 @@ def _log_retrieval_lanes(
         len(fulltext_ids),
         len(vector_ids & fulltext_ids),
         final_count,
+        extra={
+            "review_event": "retrieval.lanes",
+            "review_fields": {
+                "stage": "retrieval",
+                "query_type": query_type,
+                "mode": mode,
+                "vector_count": len(vector_ids),
+                "fulltext_count": len(fulltext_ids),
+                "overlap_count": len(vector_ids & fulltext_ids),
+                "fused_count": final_count,
+            },
+        },
     )
 
 
