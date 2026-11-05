@@ -1,5 +1,7 @@
 from collections.abc import Iterator
 import logging
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -76,3 +78,25 @@ async def test_hybrid_search_logs_both_lanes_before_fusion(
         "retrieval_lane_counts query_type=content mode=hybrid "
         "vector_count=2 fulltext_count=2 overlap_count=1 fused_count=3"
     ) in caplog.text
+
+
+def test_render_worker_configuration_emits_retrieval_info_logs() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from logging.config import dictConfig; "
+            "from backend.observability.logging import WORKER_LOG_CONFIG; "
+            "from backend.memory.tiger_client import _log_retrieval_lanes; "
+            "dictConfig(WORKER_LOG_CONFIG); "
+            "_log_retrieval_lanes(query_type='content', vector_ids={'v'}, "
+            "fulltext_ids=set(), final_count=1)",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert (
+        "retrieval_lane_counts query_type=content mode=vector_only "
+        "vector_count=1 fulltext_count=0 overlap_count=0 fused_count=1"
+    ) in result.stderr
