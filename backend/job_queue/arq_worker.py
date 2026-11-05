@@ -15,10 +15,10 @@ from backend.integrations.diff_parser import get_valid_line_range
 from backend.integrations.github_client import GitHubClient
 from backend.models.enums import ReviewOutcome
 from backend.models.findings import Finding
-from backend.models.review import DiffFile, ReviewRequest, ReviewResult
+from backend.models.review import DiffFile, ReviewFailure, ReviewRequest, ReviewResult
 from backend.observability.events import emit_agent_event
 from backend.observability.logging import log_stage, review_log_context
-from backend.core.exceptions import StageExecutionError
+from backend.core.exceptions import ModelResponseParseError, StageExecutionError
 from backend.observability.timing import (
     clock_domain_id,
     elapsed_ms,
@@ -215,6 +215,22 @@ async def _execute_review_job(
                 installation_id=installation_id,
                 head_sha=head_sha,
             )
+        except ModelResponseParseError as exc:
+            failure = ReviewFailure(
+                review_id=request.review_id,
+                attempt_id=request.attempt_id,
+                trace_id=request.trace_id,
+                cause_type=exc.cause_type,
+            )
+            await emit_agent_event(
+                request.review_id,
+                "worker",
+                "review.failed",
+                outcome=failure.outcome.value,
+                payload=failure.model_dump(mode="json"),
+            )
+            log_stage("review.failed", stage=exc.stage, outcome=failure.outcome.value)
+            raise
         except StageExecutionError as exc:
             log_stage("worker.failed", stage=exc.stage, outcome=exc.cause_type)
             raise
@@ -244,7 +260,7 @@ async def _execute_review_job_inner(
             "docs_findings": [],
             "findings": [],
             "overall_confidence": 1.0,
-            "outcome": ReviewOutcome.APPROVED,
+            "outcome": ReviewOutcome.PENDING,
         },
     )
 
@@ -316,6 +332,13 @@ async def _execute_review_job_inner(
             "hitl.enqueued", stage="human_queue", finding_ids=[str(f.id) for f in result.findings]
         )
 
+    await emit_agent_event(
+        request.review_id,
+        "worker",
+        "review.complete",
+        outcome=result.outcome.value,
+        payload={"finding_count": len(result.findings)},
+    )
     return str(request.review_id)
 
 

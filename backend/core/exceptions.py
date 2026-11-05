@@ -35,3 +35,8 @@ class StageExecutionError(WorkflowExecutionError):
         self.stage = stage
         self.cause_type = type(cause).__name__
         super().__init__(f"Review stage {stage} failed ({self.cause_type})")
+
+
+class ModelResponseParseError(StageExecutionError):
+    def __init__(self, cause: Exception) -> None:
+        super().__init__("model.parse", cause)

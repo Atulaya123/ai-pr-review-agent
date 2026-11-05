@@ -1,8 +1,28 @@
 # OWASP Top 10 for LLM Applications security review
 
-## Known unmitigated risks
+## Follow-up: finding 1 only
 
-- **Fail-open generation parsing:** malformed JSON becomes an empty findings list.
+After the original audit, the user authorized fixing only the fail-open generation
+parser. Malformed JSON, missing/non-list envelopes and invalid finding items now raise
+`ModelResponseParseError` at `model.parse`; invalid items are no longer silently dropped.
+`ReviewFailure` is a distinct failed-attempt model, and pending/failed outcomes cannot
+be constructed as completed `ReviewResult` objects. Initial workflow state is pending,
+not approved. The worker records `review.failed` in `agent_events` and propagates the
+typed error before posting or storing a successful review. The original numbered audit
+below remains a historical snapshot of `b57854d`.
+Failed attempts are recorded in the business ledger/logs, not as completed
+`PRReviewRecord` rows; the completed-review API therefore has no result for that attempt.
+
+The two acceptance tests run the real graph/worker with scripted provider responses:
+malformed output produces failed-generation/review events, no GitHub call, and no
+completed review record; valid `{"findings":[]}` still produces a clean approval,
+record and post. Schema-edge tests also reject invalid envelopes/items and partial
+success. No retry is needed to make the failure explicit. Live-provider behavior remains
+unverified. **Finding 2 is still open and was not changed.**
+
+## Known unmitigated risks at the original audit
+
+- **Original finding 1, subsequently fixed as above:** malformed JSON became an empty findings list.
   If the other specialists also return no findings, the gate can approve the review.
   Invalid output is not distinguished from a valid clean review.
 - **Outbound-content disclosure boundary:** diffs and retrieved context reach hosted

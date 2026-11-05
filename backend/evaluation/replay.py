@@ -174,7 +174,7 @@ async def run_replay_fixture(fixture: ReviewReplayFixture) -> ReplayResult:
                 "docs_findings": [],
                 "findings": [],
                 "overall_confidence": 1.0,
-                "outcome": ReviewOutcome.APPROVED,
+                "outcome": ReviewOutcome.PENDING,
             },
             config={"run_id": fixture.request.trace_id},
         )

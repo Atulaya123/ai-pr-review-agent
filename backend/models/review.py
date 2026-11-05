@@ -1,6 +1,7 @@
 from uuid import UUID, uuid4
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.models.enums import ReviewOutcome
 from backend.models.findings import Finding
@@ -31,3 +32,18 @@ class ReviewResult(BaseModel):
     overall_confidence: float
     outcome: ReviewOutcome
     posted: bool = False
+
+    @model_validator(mode="after")
+    def require_completed_review(self) -> Self:
+        if self.outcome in (ReviewOutcome.PENDING, ReviewOutcome.FAILED):
+            raise ValueError("Incomplete or failed attempts are not completed review results")
+        return self
+
+
+class ReviewFailure(BaseModel):
+    review_id: UUID
+    attempt_id: UUID
+    trace_id: UUID
+    outcome: Literal[ReviewOutcome.FAILED] = ReviewOutcome.FAILED
+    stage: Literal["model.parse"] = "model.parse"
+    cause_type: str

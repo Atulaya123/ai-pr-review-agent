@@ -6,10 +6,10 @@ from uuid import UUID
 
 from backend.models.enums import AgentType, Severity
 from backend.models.findings import Finding
-from backend.models.review import ReviewRequest
+from backend.models.review import ReviewFailure, ReviewRequest
 from backend.observability.events import emit_agent_event
 from backend.observability.logging import log_stage
-from backend.core.exceptions import StageExecutionError
+from backend.core.exceptions import ModelResponseParseError, StageExecutionError
 from backend.prompts.registry import get_system_prompt
 from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
@@ -115,6 +115,11 @@ class SpecialistAgent:
         for chunk in chunks:
             try:
                 findings = await self._review_chunk(chunk, retrieved_context)
+            except StageExecutionError as exc:
+                log_stage(
+                    "model.failed", request=request, stage=exc.stage, agent=self.agent_type.value
+                )
+                raise
             except Exception as exc:
                 log_stage(
                     "model.failed", request=request, stage="model", agent=self.agent_type.value
@@ -206,7 +211,35 @@ class SpecialistAgent:
 
         response = await _breaker.call(lambda: retry_with_backoff(_call, max_attempts=3))
 
-        findings = self._parse_findings(response.text, request)
+        try:
+            findings = self._parse_findings(response.text, request)
+        except ModelResponseParseError as exc:
+            failure = ReviewFailure(
+                review_id=request.review_id,
+                attempt_id=request.attempt_id,
+                trace_id=request.trace_id,
+                cause_type=exc.cause_type,
+            )
+            await emit_agent_event(
+                request.review_id,
+                self.agent_type,
+                "generation.failed",
+                model=response.model,
+                outcome=failure.outcome.value,
+                payload=failure.model_dump(mode="json"),
+            )
+            log_stage(
+                "model.parse_failed", request=request, stage=exc.stage, agent=self.agent_type.value
+            )
+            raise
+        await emit_agent_event(
+            request.review_id,
+            self.agent_type,
+            "generation.complete",
+            model=response.model,
+            outcome="findings" if findings else "clean",
+            payload={"finding_count": len(findings)},
+        )
         for finding in findings:
             log_stage(
                 "finding.proposed",
@@ -220,21 +253,19 @@ class SpecialistAgent:
     def _parse_findings(self, raw_text: str, request: ReviewRequest) -> list[Finding]:
         try:
             data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            logger.warning(
-                "%s agent returned non-JSON response for review %s, treating as zero findings: %r",
-                self.agent_type.value,
-                request.review_id,
-                raw_text[:500],
-            )
-            return []
-
-        safe_file_paths = sanitize_review_request(request).prompt_paths
-        path_map = {safe_path: file.path for safe_path, file in zip(safe_file_paths, request.files)}
-        findings = []
-        for item in data.get("findings", []):
-            try:
+            if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
+                raise ValueError("Response must contain a findings list")
+            safe_file_paths = sanitize_review_request(request).prompt_paths
+            path_map = {
+                safe_path: file.path for safe_path, file in zip(safe_file_paths, request.files)
+            }
+            findings = []
+            for item in data["findings"]:
+                if not isinstance(item, dict):
+                    raise ValueError("Each finding must be an object")
                 file_path = item["file_path"]
+                if not isinstance(file_path, str):
+                    raise ValueError("Finding file_path must be a string")
                 findings.append(
                     Finding(
                         agent_type=self.agent_type,
@@ -250,13 +281,6 @@ class SpecialistAgent:
                         rationale=item["rationale"],
                     )
                 )
-            except (KeyError, ValueError) as exc:
-                logger.warning(
-                    "%s agent produced a malformed finding for review %s, dropping it: %s — %r",
-                    self.agent_type.value,
-                    request.review_id,
-                    exc,
-                    item,
-                )
-                continue  # a malformed finding from the LLM should not sink the whole review
-        return findings
+            return findings
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ModelResponseParseError(exc) from exc

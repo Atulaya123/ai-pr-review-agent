@@ -18,6 +18,8 @@ class Severity(StrEnum):
 
 
 class ReviewOutcome(StrEnum):
+    PENDING = "pending"
+    FAILED = "failed"
     APPROVED = "approved"
     REQUEST_CHANGES = "request_changes"
     CRITICAL_BLOCK = "critical_block"
