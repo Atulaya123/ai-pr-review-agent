@@ -12,9 +12,14 @@ from backend.prompts.registry import get_system_prompt
 from backend.reliability.circuit_breaker import CircuitBreaker
 from backend.reliability.retry import retry_with_backoff
 from backend.reliability.timeout import LLM_TIMEOUT_S, with_timeout
+from backend.reliability.token_budget import (
+    chunk_review_request,
+    estimate_call_tokens,
+    wait_for_groq_capacity,
+)
 from backend.security.injection_guard import fence_untrusted_content, sanitize_review_request
 from backend.core.config import get_settings
-from backend.tools.llm_client import LLMClient
+from backend.tools.llm_client import LLMClient, LLMResponse
 
 _LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4o-mini",
@@ -72,11 +77,69 @@ class SpecialistAgent:
 
     async def review(self, request: ReviewRequest, retrieved_context: str = "") -> list[Finding]:
         await emit_agent_event(request.review_id, self.agent_type, "span.start")
+        settings = get_settings()
+        system = get_system_prompt(self.agent_type.value)
+        chunks = [request]
+        if settings.llm_provider == "groq":
+            chunks = chunk_review_request(
+                request,
+                estimate=lambda chunk: estimate_call_tokens(
+                    system,
+                    self._build_user_prompt(chunk, retrieved_context),
+                    settings.llm_max_output_tokens,
+                ),
+                token_limit=settings.groq_tokens_per_minute,
+            )
+            await emit_agent_event(
+                request.review_id,
+                self.agent_type,
+                "review.chunking",
+                outcome="chunked" if len(chunks) > 1 else "unchunked",
+                payload={
+                    "chunk_count": len(chunks),
+                    "file_count": len(request.files),
+                    "token_counts_estimated": True,
+                    "estimated_call_tokens": [
+                        estimate_call_tokens(
+                            system,
+                            self._build_user_prompt(chunk, retrieved_context),
+                            settings.llm_max_output_tokens,
+                        )
+                        for chunk in chunks
+                    ],
+                },
+            )
+        best: dict[tuple[str, int, int], Finding] = {}
+        for chunk in chunks:
+            for finding in await self._review_chunk(chunk, retrieved_context):
+                key = (finding.file_path, finding.line_start, finding.line_end)
+                previous = best.get(key)
+                if previous is None or finding.confidence > previous.confidence:
+                    best[key] = finding
+        await emit_agent_event(request.review_id, self.agent_type, "span.end")
+        return list(best.values())
 
+    async def _review_chunk(self, request: ReviewRequest, retrieved_context: str) -> list[Finding]:
         system = get_system_prompt(self.agent_type.value)
         user = self._build_user_prompt(request, retrieved_context)
+        settings = get_settings()
 
-        async def _call():
+        async def _call() -> LLMResponse:
+            if settings.llm_provider == "groq":
+                wait_started_ns = time.monotonic_ns()
+                await wait_for_groq_capacity(
+                    tokens=estimate_call_tokens(system, user, settings.llm_max_output_tokens),
+                    token_limit=settings.groq_tokens_per_minute,
+                    model=self.model,
+                    redis_url=settings.redis_url,
+                )
+                await emit_agent_event(
+                    request.review_id,
+                    self.agent_type,
+                    "llm.rate_limit_wait",
+                    latency_ms=int((time.monotonic_ns() - wait_started_ns) / 1_000_000),
+                    payload={"duration_clock": "monotonic", "token_counts_estimated": True},
+                )
             call_start_ns = time.monotonic_ns()
             call_started_at = datetime.now(timezone.utc)
             try:
@@ -85,7 +148,7 @@ class SpecialistAgent:
                         system=system,
                         user=user,
                         model=self.model,
-                        max_output_tokens=get_settings().llm_max_output_tokens,
+                        max_output_tokens=settings.llm_max_output_tokens,
                         review_id=request.review_id,
                         agent=self.agent_type.value,
                     ),
@@ -124,9 +187,7 @@ class SpecialistAgent:
 
         response = await _breaker.call(lambda: retry_with_backoff(_call, max_attempts=3))
 
-        findings = self._parse_findings(response.text, request)
-        await emit_agent_event(request.review_id, self.agent_type, "span.end")
-        return findings
+        return self._parse_findings(response.text, request)
 
     def _parse_findings(self, raw_text: str, request: ReviewRequest) -> list[Finding]:
         try:

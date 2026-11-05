@@ -24,4 +24,4 @@ jobs:
       - name: Check formatting
         run: black --check backend scripts
       - name: Replay recorded reviews
-        run: pytest -q backend/evaluation/test_replay.py backend/evaluation/test_retrieval_lanes.py
+        run: pytest -q backend/evaluation

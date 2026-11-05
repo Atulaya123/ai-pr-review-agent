@@ -125,6 +125,11 @@ Reciprocal Rank Fusion) against this project's own architecture rules, ingested 
 runs use Ollama (`nomic-embed-text`), the deployed instance uses Gemini
 (`gemini-embedding-001`, free tier) since Groq — its LLM provider — has no embeddings API.
 
+Deployed evidence from PR #16 on 2026-11-05: the review query returned 6 vector candidates,
+0 full-text candidates, 0 overlap, and 5 fused results. That query was vector-only; the
+hybrid implementation does not establish that both lanes contribute on every query.
+Sparse ranking uses PostgreSQL `ts_rank`, not BM25.
+
 ## Nightly knowledge-base refresh (Airflow)
 
 `scripts/ingest_docs.py` was a manual, one-shot script. `airflow/dags/knowledge_base_refresh.py`
@@ -156,7 +161,7 @@ be gating on judge noise rather than anything this run actually touched.
 
 The offline replay suite runs in GitHub Actions on pushes and pull requests:
 `mypy backend`, `black --check backend scripts`, and
-`pytest -q backend/evaluation/test_replay.py`. Replays use recorded model outputs and fail if
+`pytest -q backend/evaluation`. Replays use recorded model outputs and fail if
 the current prompt hash differs from the fixture.
 
 To compare a candidate specialist prompt with the current prompt on the same recorded fixture
@@ -173,6 +178,15 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 Each MLflow run stores an immutable behavior manifest, prompt hashes, per-fixture findings, and
 separate finding-quality, escalation, latency, cost, and coverage metrics. This comparison makes
 live model calls; only the replay suite is provider-free.
+
+Groq reviews estimate the complete prompt plus output allowance before dispatch and chunk
+oversized diffs at file boundaries. All chunks are reviewed and findings deduplicated. Redis
+coordinates estimated token reservations across specialists and workers; rate-limit waiting
+is recorded separately from model-call time. A file that cannot fit by itself fails explicitly
+rather than being split or omitted. `GROQ_TOKENS_PER_MINUTE` defaults to 8000 and
+`REVIEW_JOB_TIMEOUT_S` to 1800 so paced reviews are not killed by ARQ's shorter default.
+The PR #14 regression uses its original 12 file patches with synthetic responses: two chunks
+per specialist, eight calls total, without live providers.
 
 No Docker needed to run this locally — see [`airflow/README.md`](airflow/README.md) for the
 exact setup (a plain venv + `airflow standalone`), which was used to verify the DAG parses and

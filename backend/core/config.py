@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     daily_budget_usd: float = Field(default=5.0, ge=0)
     daily_judge_budget_usd: float = Field(default=5.0, ge=0)
     llm_max_output_tokens: int = Field(default=2048, gt=0)
+    groq_tokens_per_minute: int = Field(default=8000, gt=0)
+    review_job_timeout_s: int = Field(default=1800, gt=0)
 
     webhook_max_body_bytes: int = 2_000_000
 

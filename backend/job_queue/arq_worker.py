@@ -246,3 +246,4 @@ class WorkerSettings:
     functions = [run_review_job]
     on_startup = _on_startup
     redis_settings = _redis_settings()
+    job_timeout = get_settings().review_job_timeout_s

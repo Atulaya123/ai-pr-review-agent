@@ -156,7 +156,9 @@ class GroqLLMClient(LLMClient):
     def __init__(self, api_key: str):
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
+        self._client = AsyncOpenAI(
+            base_url="https://api.groq.com/openai/v1", api_key=api_key, max_retries=0
+        )
 
     async def complete_json(
         self,

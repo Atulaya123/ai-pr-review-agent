@@ -4,7 +4,11 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
-from backend.core.exceptions import BudgetExceededError, PricingUnavailableError
+from backend.core.exceptions import (
+    BudgetExceededError,
+    PricingUnavailableError,
+    TokenBudgetExceededError,
+)
 
 T = TypeVar("T")
 
@@ -27,7 +31,7 @@ async def retry_with_backoff(
     for attempt in range(1, max_attempts + 1):
         try:
             return await fn()
-        except (BudgetExceededError, PricingUnavailableError):
+        except (BudgetExceededError, PricingUnavailableError, TokenBudgetExceededError):
             raise
         except exceptions as exc:  # noqa: PERF203 - retry loop is intentional
             last_exc = exc

@@ -74,6 +74,8 @@ def build_behavior_manifest(
         "llm_provider": active_settings.llm_provider,
         "model_identifier": model,
         "max_output_tokens": active_settings.llm_max_output_tokens,
+        "groq_tokens_per_minute": active_settings.groq_tokens_per_minute,
+        "review_job_timeout_s": active_settings.review_job_timeout_s,
         "daily_budget_usd": active_settings.daily_budget_usd,
         "daily_judge_budget_usd": active_settings.daily_judge_budget_usd,
         "embedding_provider": active_settings.embedding_provider,
@@ -109,6 +111,15 @@ def build_behavior_manifest(
             {
                 path: _file_hash(path)
                 for path in ("backend/orchestrator/graph.py", "backend/orchestrator/nodes.py")
+            }
+        ),
+        "chunking_rules_hash": _digest(
+            {
+                path: _file_hash(path)
+                for path in (
+                    "backend/reliability/token_budget.py",
+                    "backend/agents/base_agent.py",
+                )
             }
         ),
     }

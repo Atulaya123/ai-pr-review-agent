@@ -18,6 +18,10 @@ class PricingUnavailableError(AIPRReviewError):
     """No effective provider/model price is available to reserve a call."""
 
 
+class TokenBudgetExceededError(AIPRReviewError):
+    """A whole file plus prompt overhead cannot fit the provider token limit."""
+
+
 class CircuitOpenError(AIPRReviewError):
     """The circuit breaker for this dependency is open; fail fast."""
 

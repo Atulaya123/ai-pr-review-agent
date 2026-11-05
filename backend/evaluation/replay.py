@@ -141,6 +141,9 @@ async def run_replay_fixture(fixture: ReviewReplayFixture) -> ReplayResult:
         )
         stack.enter_context(patch("backend.orchestrator.nodes.emit_agent_event", no_event_writes))
         stack.enter_context(patch("backend.agents.base_agent.emit_agent_event", no_event_writes))
+        stack.enter_context(
+            patch("backend.agents.base_agent.wait_for_groq_capacity", no_event_writes)
+        )
 
         from backend.orchestrator.graph import build_review_graph
 
