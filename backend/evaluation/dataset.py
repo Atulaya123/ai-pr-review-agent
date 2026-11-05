@@ -67,6 +67,9 @@ class GenerationEvalCase:
     diff_text: str
     expect_supported: bool
     expect_relevant: bool
+    reference_answer: str | None = None
+    retrieved_symbols: tuple[str, ...] = ()
+    relevant_symbols: frozenset[str] = frozenset()
 
 
 GENERATION_TEST_SET: list[GenerationEvalCase] = [
@@ -94,6 +97,9 @@ GENERATION_TEST_SET: list[GenerationEvalCase] = [
         diff_text='query = "SELECT * FROM users WHERE name = \'" + name + "\'"',
         expect_supported=True,
         expect_relevant=True,
+        reference_answer="Concatenating user input into SQL violates the untrusted-content invariant.",
+        retrieved_symbols=("untrusted_content_boundary",),
+        relevant_symbols=frozenset({"untrusted_content_boundary"}),
     ),
     GenerationEvalCase(
         name="ungrounded_finding_no_context",

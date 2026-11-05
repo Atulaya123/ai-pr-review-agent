@@ -23,6 +23,13 @@ from backend.evaluation.replay import (
     ReviewReplayFixture,
     finding_snapshot,
 )
+from backend.evaluation.ragas_metrics import (
+    Embed,
+    EvaluationSample,
+    MetricValue,
+    evaluate_sample,
+    metric_summary,
+)
 from backend.models.enums import AgentType, ReviewOutcome
 from backend.models.findings import Finding
 from backend.prompts.registry import get_system_prompt, use_prompt_overrides
@@ -65,7 +72,10 @@ class FixtureExperimentResult(BaseModel):
     latency_ms: float
     known_cost_usd: float
     unknown_cost_calls: int
+    judge_known_cost_usd: float
+    judge_unknown_cost_calls: int
     scorecard: FindingScorecard
+    evaluation_metrics: dict[str, MetricValue]
 
 
 class ConfigurationExperimentResult(BaseModel):
@@ -76,7 +86,10 @@ class ConfigurationExperimentResult(BaseModel):
     mean_latency_ms: float
     known_cost_usd: float
     unknown_cost_calls: int
+    judge_known_cost_usd: float
+    judge_unknown_cost_calls: int
     coverage: float
+    evaluation_metrics: dict[str, float]
 
 
 class ExperimentComparison(BaseModel):
@@ -103,6 +116,8 @@ async def run_configuration_comparison(
     tracking_uri: str | None = None,
     experiment_name: str = "ai-pr-review-config-comparison",
     client_factory: ClientFactory | None = None,
+    judge_factory: ClientFactory | None = None,
+    evaluation_embed: Embed | None = None,
 ) -> ExperimentComparison:
     """Run baseline and one-prompt candidate on identical fixtures, tracking both in MLflow."""
     if not fixtures:
@@ -140,6 +155,8 @@ async def run_configuration_comparison(
         experiment_name=experiment_name,
         fixture_set_version=fixture_set_version,
         retrieval_runner=retrieval_runner,
+        judge_factory=judge_factory,
+        evaluation_embed=evaluation_embed,
     )
     candidate = await _run_configuration(
         fixtures,
@@ -156,6 +173,8 @@ async def run_configuration_comparison(
         experiment_name=experiment_name,
         fixture_set_version=fixture_set_version,
         retrieval_runner=retrieval_runner,
+        judge_factory=judge_factory,
+        evaluation_embed=evaluation_embed,
     )
     comparison = _compare_results(baseline, candidate)
     _log_comparison(comparison, tracking_uri=tracking_uri, experiment_name=experiment_name)
@@ -174,6 +193,8 @@ async def _run_configuration(
     experiment_name: str,
     fixture_set_version: str,
     retrieval_runner: RetrievalRunner | None,
+    judge_factory: ClientFactory | None,
+    evaluation_embed: Embed | None,
 ) -> ConfigurationExperimentResult:
     _configure_mlflow(mlflow, tracking_uri, experiment_name)
     with use_prompt_overrides(prompt_overrides):
@@ -233,6 +254,8 @@ async def _run_configuration(
                     client_factory=client_factory,
                     usage=usage,
                     retrieval_runner=retrieval_runner,
+                    judge_factory=judge_factory,
+                    evaluation_embed=evaluation_embed,
                 )
                 case_results.append(case_result)
                 artifact_path = Path(temp_dir) / f"{fixture.name}.json"
@@ -244,6 +267,14 @@ async def _run_configuration(
             case.outcome == ReviewOutcome.ESCALATED for case in case_results
         ) / len(fixtures)
         mean_latency_ms = _mean(case.latency_ms for case in case_results)
+        evaluation_metrics = metric_summary([case.evaluation_metrics for case in case_results])
+        evaluation_metrics["judge_known_cost_usd"] = sum(
+            case.judge_known_cost_usd for case in case_results
+        )
+        evaluation_metrics["judge_unknown_cost_calls"] = float(
+            sum(case.judge_unknown_cost_calls for case in case_results)
+        )
+        mlflow.log_metrics(evaluation_metrics)
         mlflow.log_metrics(
             {
                 "finding_f1": mean_f1,
@@ -263,7 +294,10 @@ async def _run_configuration(
         mean_latency_ms=mean_latency_ms,
         known_cost_usd=usage.known_cost_usd,
         unknown_cost_calls=usage.unknown_cost_calls,
+        judge_known_cost_usd=sum(case.judge_known_cost_usd for case in case_results),
+        judge_unknown_cost_calls=sum(case.judge_unknown_cost_calls for case in case_results),
         coverage=len(case_results) / len(fixtures),
+        evaluation_metrics=evaluation_metrics,
     )
 
 
@@ -276,13 +310,16 @@ async def _run_fixture(
     client_factory: ClientFactory,
     usage: _RunUsage,
     retrieval_runner: RetrievalRunner | None,
+    judge_factory: ClientFactory | None,
+    evaluation_embed: Embed | None,
 ) -> FixtureExperimentResult:
     if fixture.request.installation_id is not None:
         raise ValueError("experiments cannot perform GitHub repository lookups")
 
     class _UsageTrackingClient(LLMClient):
-        def __init__(self, client: LLMClient) -> None:
+        def __init__(self, client: LLMClient, tracked_usage: _RunUsage) -> None:
             self._client = client
+            self._usage = tracked_usage
 
         async def complete_json(
             self,
@@ -305,19 +342,24 @@ async def _run_fixture(
                 agent=agent,
             )
             if response.cost_usd is None:
-                usage.unknown_cost_calls += 1
+                self._usage.unknown_cost_calls += 1
             else:
-                usage.known_cost_usd += response.cost_usd
+                self._usage.known_cost_usd += response.cost_usd
             return response
 
-    client = _UsageTrackingClient(client_factory(settings))
+    client = _UsageTrackingClient(client_factory(settings), usage)
+    judge_usage = _RunUsage()
+
+    retrieved_context = ""
 
     async def fixed_retrieval(request: object) -> str:
-        return (
+        nonlocal retrieved_context
+        retrieved_context = (
             await retrieval_runner(fixture, settings)
             if retrieval_runner is not None
             else fixture.retrieved_context
         )
+        return retrieved_context
 
     async def no_event_writes(*args: object, **kwargs: object) -> None:
         return None
@@ -366,6 +408,24 @@ async def _run_fixture(
     latency_ms = (time.monotonic_ns() - started_ns) / 1_000_000
     predicted = [finding_snapshot(finding) for finding in state["findings"]]
     scorecard = _score_findings(fixture.expected_findings, state["findings"])
+    evaluation_metrics = await evaluate_sample(
+        EvaluationSample(
+            name=fixture.name,
+            question=fixture.evaluation_question or "Review this pull request for code issues.",
+            response="\n".join(finding.rationale for finding in state["findings"]),
+            contexts=[retrieved_context] if retrieved_context else [],
+            reference=fixture.reference_answer,
+            retrieved_symbols=fixture.retrieved_symbols,
+            relevant_symbols=fixture.relevant_symbols,
+            findings=state["findings"],
+            diff_text="\n".join(file.patch for file in fixture.request.files),
+        ),
+        client=(
+            _UsageTrackingClient(judge_factory(settings), judge_usage) if judge_factory else None
+        ),
+        model=model_identifier,
+        embed=evaluation_embed,
+    )
     return FixtureExperimentResult(
         name=fixture.name,
         findings=predicted,
@@ -377,7 +437,10 @@ async def _run_fixture(
         latency_ms=latency_ms,
         known_cost_usd=usage.known_cost_usd - known_cost_before,
         unknown_cost_calls=usage.unknown_cost_calls - unknown_calls_before,
+        judge_known_cost_usd=judge_usage.known_cost_usd,
+        judge_unknown_cost_calls=judge_usage.unknown_cost_calls,
         scorecard=scorecard,
+        evaluation_metrics=evaluation_metrics,
     )
 
 

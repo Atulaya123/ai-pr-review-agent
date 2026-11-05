@@ -173,6 +173,17 @@ be gating on judge noise rather than anything this run actually touched.
 
 ## Prompt configuration comparison
 
+Evaluation development dependencies include RAGAS 0.4.3. The joint generation-fixture
+scorecard emits Recall@3, MRR, the two existing judge rubrics, and RAGAS faithfulness,
+answer relevancy, context precision and context recall with per-metric applicability
+and denominators. Missing reference labels are `not_applicable`, not zero.
+`scripts.compare_replays --judge-metrics` enables these judges for both MLflow
+configurations; without that option, eligible judge metrics are explicitly unavailable.
+Judge generations and evaluation embeddings reserve against the separate judge ledger.
+Embedding adapters currently expose vectors but no usage, so their cost is recorded as
+unknown. Local tests exercise the actual RAGAS algorithms with scripted judges and
+synthetic embeddings; no live RAGAS quality scores have been verified.
+
 The offline replay suite runs in GitHub Actions on pushes and pull requests:
 `mypy backend`, `black --check backend scripts`, and
 `pytest -q backend/evaluation`. Replays use recorded model outputs and fail if

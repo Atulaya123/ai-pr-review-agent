@@ -62,6 +62,10 @@ class ReviewReplayFixture(BaseModel):
     expected_findings: list[ReplayFinding]
     expected_overall_confidence: float
     expected_outcome: ReviewOutcome
+    evaluation_question: str | None = None
+    reference_answer: str | None = None
+    retrieved_symbols: list[str] = []
+    relevant_symbols: set[str] = set()
 
 
 @dataclass(frozen=True)

@@ -16,6 +16,49 @@ from backend.memory.tiger_client import hybrid_search_chunk_symbols
 from backend.tools.llm_client import get_llm_client
 
 
+async def compute_joint_metrics(settings: Settings) -> dict[str, object]:
+    """All eight scores use the same generation fixtures and explicit reference labels."""
+    from backend.evaluation.ragas_metrics import (
+        EvaluationSample,
+        budgeted_evaluation_embed,
+        evaluate_sample,
+        metric_summary,
+    )
+
+    llm = get_llm_client(settings)
+    model = resolve_model_for_provider(settings.llm_provider)
+    embed = budgeted_evaluation_embed(settings)
+    cases = []
+    for case in GENERATION_TEST_SET:
+        metrics = await evaluate_sample(
+            EvaluationSample(
+                name=case.name,
+                question="What code review issue is present in this diff?",
+                response=case.finding.rationale,
+                contexts=[case.context] if case.context else [],
+                reference=case.reference_answer,
+                retrieved_symbols=list(case.retrieved_symbols),
+                relevant_symbols=set(case.relevant_symbols),
+                findings=[case.finding],
+                diff_text=case.diff_text,
+            ),
+            client=llm,
+            model=model,
+            embed=embed,
+        )
+        cases.append(metrics)
+    return {
+        "cases": [
+            {
+                "name": case.name,
+                "metrics": {key: value.model_dump() for key, value in metrics.items()},
+            }
+            for case, metrics in zip(GENERATION_TEST_SET, cases)
+        ],
+        "summary": metric_summary(cases),
+    }
+
+
 @dataclass(frozen=True)
 class RetrievalCaseResult:
     query: str

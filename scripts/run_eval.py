@@ -16,9 +16,14 @@ Then:
 """
 
 import asyncio
+import json
 
 from backend.core.config import get_settings
-from backend.evaluation.runner import compute_generation_metrics, compute_retrieval_metrics
+from backend.evaluation.runner import (
+    compute_generation_metrics,
+    compute_joint_metrics,
+    compute_retrieval_metrics,
+)
 
 
 async def run_retrieval_eval(settings) -> None:
@@ -47,7 +52,8 @@ async def run_generation_eval(settings) -> None:
 async def main() -> None:
     settings = get_settings()
     await run_retrieval_eval(settings)
-    await run_generation_eval(settings)
+    print("=== Joint fixture scorecard: retrieval, existing judges, and RAGAS ===")
+    print(json.dumps(await compute_joint_metrics(settings), indent=2))
 
 
 if __name__ == "__main__":
