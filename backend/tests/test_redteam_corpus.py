@@ -8,6 +8,7 @@ import pytest
 from backend.redteam.corpus import evaluate_success_condition, validate_success_condition
 
 CORPUS_PATH = Path(__file__).parent / "fixtures" / "redteam_attacks.v1.jsonl"
+BENIGN_CORPUS_PATH = Path(__file__).parent / "fixtures" / "benign_prs.v1.jsonl"
 FAMILIES = {
     "DIRECT_OVERRIDE",
     "METADATA",
@@ -30,6 +31,18 @@ def load_corpus() -> list[dict[str, object]]:
             record = json.loads(line)
         except json.JSONDecodeError as error:
             pytest.fail(f"Invalid JSON at {CORPUS_PATH}:{line_number}: {error}")
+        assert isinstance(record, dict), f"Record at line {line_number} must be an object"
+        records.append(record)
+    return records
+
+
+def load_jsonl(path: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            pytest.fail(f"Invalid JSON at {path}:{line_number}: {error}")
         assert isinstance(record, dict), f"Record at line {line_number} must be an object"
         records.append(record)
     return records
@@ -69,6 +82,53 @@ def test_attack_corpus_has_60_valid_machine_checkable_records():
     assert set(counts) == FAMILIES
     assert counts["CORPUS_POISON"] >= 6
     assert counts["TOOL_RESULT"] >= 5
+
+
+def test_benign_corpus_has_100_prs_and_at_least_30_hard_negatives():
+    records = load_jsonl(BENIGN_CORPUS_PATH)
+    assert len(records) == 100
+    assert len({record.get("id") for record in records}) == 100
+    assert sum(record.get("hard_negative") is True for record in records) >= 30
+
+    for record in records:
+        assert isinstance(record.get("id"), str)
+        assert record.get("expected_outcome") == "must_not_block"
+        assert isinstance(record.get("hard_negative"), bool)
+        artefact = record.get("artefact")
+        assert isinstance(artefact, dict)
+        assert isinstance(artefact.get("title"), str)
+        assert isinstance(artefact.get("description"), str)
+        assert isinstance(artefact.get("branch"), str)
+        assert isinstance(artefact.get("commit_messages"), list)
+        files = artefact.get("files")
+        assert isinstance(files, list) and files
+        assert all(
+            isinstance(file, dict)
+            and isinstance(file.get("path"), str)
+            and isinstance(file.get("patch"), str)
+            for file in files
+        )
+
+
+def test_benign_records_and_complete_patches_are_disjoint_from_attack_records():
+    attacks = load_corpus()
+    benign = load_jsonl(BENIGN_CORPUS_PATH)
+
+    attack_ids = {record["id"] for record in attacks}
+    benign_ids = {record["id"] for record in benign}
+    assert attack_ids.isdisjoint(benign_ids)
+
+    attack_artefacts = {
+        json.dumps(record["artefact"], sort_keys=True, ensure_ascii=False) for record in attacks
+    }
+    benign_artefacts = {
+        json.dumps(record["artefact"], sort_keys=True, ensure_ascii=False) for record in benign
+    }
+    assert attack_artefacts.isdisjoint(benign_artefacts)
+
+    attack_patches = {file["patch"] for record in attacks for file in record["artefact"]["files"]}
+    benign_patches = {file["patch"] for record in benign for file in record["artefact"]["files"]}
+    assert attack_patches.isdisjoint(benign_patches)
 
 
 @pytest.mark.parametrize(
