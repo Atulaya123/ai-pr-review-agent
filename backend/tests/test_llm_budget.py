@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import UUID
@@ -105,7 +105,7 @@ async def _seed_price(session: AsyncSession, provider: str, model: str) -> None:
             cached_input_rate_per_million=Decimal("1"),
             output_rate_per_million=_RATE,
             currency="USD",
-            effective_from=date.today(),
+            effective_from=datetime.now(timezone.utc).date(),
             source="Test fixture rate.",
         )
     )

@@ -10,6 +10,29 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aipr_review
+        ports:
+          - 5544:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6480:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,5 +46,28 @@ jobs:
         run: mypy backend
       - name: Check formatting
         run: black --check backend scripts
-      - name: Replay recorded reviews
-        run: pytest -q backend/evaluation backend/tests/test_redteam_corpus.py
+      - name: Run full test suite
+        run: pytest -q --junitxml="$RUNNER_TEMP/pytest-results.xml"
+      - name: Report test counts
+        if: always()
+        run: |
+          python - "$RUNNER_TEMP/pytest-results.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path(sys.argv[1])
+          if not report.exists():
+              print("Test counts unavailable: pytest did not produce a JUnit report.")
+              raise SystemExit(0)
+
+          cases = ET.parse(report).getroot().findall(".//testcase")
+          skipped = sum(case.find("skipped") is not None for case in cases)
+          failed = sum(case.find("failure") is not None for case in cases)
+          errors = sum(case.find("error") is not None for case in cases)
+          passed = len(cases) - skipped - failed - errors
+          print(
+              f"Test counts: collected/executed={len(cases)}, passed={passed}, "
+              f"skipped={skipped}, failed={failed + errors}"
+          )
+          PY

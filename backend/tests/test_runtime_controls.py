@@ -41,6 +41,7 @@ def _finding() -> Finding:
 
 async def test_kill_switch_reread_after_review_suppresses_both_github_paths_and_keeps_records(
     db_session: AsyncSession,
+    _clear_test_checkpoints: None,
 ) -> None:
     github = AsyncMock()
     engine = AsyncMock()
@@ -75,6 +76,7 @@ async def test_kill_switch_reread_after_review_suppresses_both_github_paths_and_
 
 async def test_force_hitl_routes_verified_high_confidence_finding_to_queue_without_redeployment(
     db_session: AsyncSession,
+    _clear_test_checkpoints: None,
 ) -> None:
     engine = AsyncMock()
     github = AsyncMock()
@@ -114,6 +116,7 @@ async def test_force_hitl_routes_verified_high_confidence_finding_to_queue_witho
 async def test_disable_specialist_skips_dispatch_and_can_be_reenabled_in_same_process(
     specialist: str,
     db_session: AsyncSession,
+    _clear_test_checkpoints: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from backend.models.review import ReviewRequest
@@ -145,9 +148,9 @@ async def test_disable_specialist_skips_dispatch_and_can_be_reenabled_in_same_pr
     agent.review.assert_awaited_once()
 
 
-async def test_invalid_controls_fail_closed_and_invalid_updates_do_not_replace_valid_state() -> (
-    None
-):
+async def test_invalid_controls_fail_closed_and_invalid_updates_do_not_replace_valid_state(
+    _clear_test_checkpoints: None,
+) -> None:
     redis = Redis.from_url(get_settings().redis_url)
     try:
         await update_runtime_controls({"posting_disabled": True})

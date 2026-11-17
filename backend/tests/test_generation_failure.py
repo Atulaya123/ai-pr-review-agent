@@ -49,6 +49,7 @@ async def _run(request: ReviewRequest, github: AsyncMock) -> str:
 
 async def test_malformed_generation_fails_explicitly_and_never_posts_or_records_a_clean_review(
     db_session: AsyncSession,
+    _clear_test_checkpoints: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = _request(81)
@@ -98,6 +99,7 @@ async def test_malformed_generation_fails_explicitly_and_never_posts_or_records_
 
 async def test_valid_clean_generation_still_records_and_posts_a_distinct_clean_verdict(
     db_session: AsyncSession,
+    _clear_test_checkpoints: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = _request(82)

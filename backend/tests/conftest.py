@@ -71,7 +71,7 @@ async def _clear_test_checkpoints():
 
 
 @pytest_asyncio.fixture
-async def db_session(_test_database_exists, _clear_test_checkpoints):
+async def db_session(_test_database_exists):
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

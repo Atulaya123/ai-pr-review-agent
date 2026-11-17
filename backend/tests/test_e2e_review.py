@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -52,14 +52,16 @@ async def _seed_mock_price(session: AsyncSession) -> None:
             cached_input_rate_per_million=Decimal("0"),
             output_rate_per_million=Decimal("0"),
             currency="USD",
-            effective_from=date.today(),
+            effective_from=datetime.now(timezone.utc).date(),
             source="Deterministic local MockLLMClient; no provider-billed token usage.",
         )
     )
     await session.commit()
 
 
-async def test_pipeline_flags_sql_injection_and_blocks(db_session: AsyncSession) -> None:
+async def test_pipeline_flags_sql_injection_and_blocks(
+    db_session: AsyncSession, _clear_test_checkpoints: None
+) -> None:
     """M1 demo: a fixture diff with a known SQL-injection pattern goes in, and
     the aggregator comes back with a CRITICAL finding + CRITICAL_BLOCK outcome
     — end to end through the real LangGraph fan-out, using the mock LLM client
@@ -79,7 +81,9 @@ async def test_pipeline_flags_sql_injection_and_blocks(db_session: AsyncSession)
     assert final_state["outcome"] == ReviewOutcome.CRITICAL_BLOCK
 
 
-async def test_pipeline_clean_diff_approves(db_session: AsyncSession) -> None:
+async def test_pipeline_clean_diff_approves(
+    db_session: AsyncSession, _clear_test_checkpoints: None
+) -> None:
     await _seed_mock_price(db_session)
     request = ReviewRequest(
         repo="acme/demo", pr_number=2, head_sha="def456", files=CLEAN_DIFF_FILES
@@ -93,7 +97,9 @@ async def test_pipeline_clean_diff_approves(db_session: AsyncSession) -> None:
 
 
 async def test_pipeline_uses_deployed_groq_and_gemini_configuration(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    db_session: AsyncSession,
+    _clear_test_checkpoints: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run the graph using Render's provider/model configuration without
     contacting paid providers or the deployed database."""
@@ -205,7 +211,9 @@ async def test_pipeline_uses_deployed_groq_and_gemini_configuration(
     assert all(event.ts.tzinfo is not None for event in timed_events)
 
 
-async def test_injection_review_persists_separate_safety_metrics(db_session: AsyncSession) -> None:
+async def test_injection_review_persists_separate_safety_metrics(
+    db_session: AsyncSession, _clear_test_checkpoints: None
+) -> None:
     await _seed_mock_price(db_session)
     request = injection_review_request()
     final_state = await get_workflow_engine().run(
