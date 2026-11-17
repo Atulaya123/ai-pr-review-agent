@@ -51,12 +51,12 @@ async def _ensure_test_database_exists(test_db_url: str) -> None:
         await admin_engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session")
 async def _test_database_exists():
     await _ensure_test_database_exists(get_settings().tiger_database_url)
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture
 async def _clear_test_checkpoints():
     """RedisCheckpointSaver keys everything under an `aipr:` prefix — sweep
     them after every test so review checkpoints don't accumulate in the dev
@@ -71,7 +71,7 @@ async def _clear_test_checkpoints():
 
 
 @pytest_asyncio.fixture
-async def db_session():
+async def db_session(_test_database_exists, _clear_test_checkpoints):
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
