@@ -90,10 +90,17 @@ def test_benign_corpus_has_100_prs_and_at_least_30_hard_negatives():
     assert len({record.get("id") for record in records}) == 100
     assert sum(record.get("hard_negative") is True for record in records) >= 30
 
+    category_counts: dict[str, int] = {}
     for record in records:
         assert isinstance(record.get("id"), str)
         assert record.get("expected_outcome") == "must_not_block"
         assert isinstance(record.get("hard_negative"), bool)
+        if record["hard_negative"]:
+            category = record.get("hard_negative_category")
+            assert isinstance(category, str)
+            category_counts[category] = category_counts.get(category, 0) + 1
+        else:
+            assert "hard_negative_category" not in record
         artefact = record.get("artefact")
         assert isinstance(artefact, dict)
         assert isinstance(artefact.get("title"), str)
@@ -108,6 +115,16 @@ def test_benign_corpus_has_100_prs_and_at_least_30_hard_negatives():
             and isinstance(file.get("patch"), str)
             for file in files
         )
+
+    assert category_counts == {
+        "security_injection": 9,
+        "redteam_corpus_diff": 3,
+        "prompt_injection_docs": 5,
+        "prompt_engineering": 5,
+        "legitimate_base64": 5,
+        "non_english": 5,
+        "generated_lock_minified": 5,
+    }
 
 
 def test_benign_records_and_complete_patches_are_disjoint_from_attack_records():
