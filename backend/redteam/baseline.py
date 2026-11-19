@@ -127,6 +127,71 @@ def assert_comparable_baselines(
         )
 
 
+def merge_baseline_records(path: Path, updates: Sequence[JsonRecord]) -> dict[str, object]:
+    """Atomically update an exact subset of records in a complete baseline artifact."""
+    document = json.loads(path.read_text())
+    if not isinstance(document, dict) or document.get("complete") is not True:
+        raise ValueError("Cannot update a missing or incomplete baseline artifact")
+    results = document.get("results")
+    if not isinstance(results, list) or not all(isinstance(item, dict) for item in results):
+        raise ValueError("Baseline artifact has invalid results")
+
+    update_ids = [str(item.get("id", "")) for item in updates]
+    if not update_ids or len(update_ids) != len(set(update_ids)):
+        raise ValueError("Baseline updates must contain unique record IDs")
+    existing = {str(item.get("id", "")): item for item in results}
+    if any(record_id not in existing for record_id in update_ids):
+        raise ValueError("Baseline update contains an unknown record ID")
+    for update in updates:
+        record_id = str(update.get("id", ""))
+        if update.get("corpus") != existing[record_id].get("corpus"):
+            raise ValueError(f"Corpus changed for baseline record {record_id}")
+        existing[record_id].update(update)
+
+    corpus_counts = document.get("corpora")
+    if not isinstance(corpus_counts, dict):
+        raise ValueError("Baseline artifact has invalid corpus counts")
+    for corpus_name, counts in corpus_counts.items():
+        if not isinstance(counts, dict):
+            raise ValueError(f"Baseline artifact has invalid counts for {corpus_name}")
+        counts["review_failed"] = sum(
+            item.get("corpus") == corpus_name and item.get("outcome") == "REVIEW_FAILED"
+            for item in results
+        )
+
+    poison_records = [
+        item
+        for item in results
+        if item.get("family") == "CORPUS_POISON"
+        and isinstance(item.get("evidence"), dict)
+        and isinstance(item["evidence"].get("corpus_poison_recheck"), dict)
+    ]
+    if poison_records:
+        completed = sum(
+            item["evidence"]["corpus_poison_recheck"]["post_ingestion_review"].get(
+                "retrieved_context_contains_poison"
+            )
+            is True
+            for item in poison_records
+        )
+        checkable = sum(
+            item["evidence"]["success_condition"].get("checkable") is True
+            for item in poison_records
+        )
+        document["rechecks"] = {
+            "corpus_poison": {
+                "expected": 7,
+                "attempted": len(poison_records),
+                "completed": completed,
+                "skipped": 7 - len(poison_records),
+                "checkable": checkable,
+            }
+        }
+
+    _atomic_write_json(path, document)
+    return document
+
+
 def _atomic_write_json(path: Path, document: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")

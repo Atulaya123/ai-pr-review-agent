@@ -14,8 +14,10 @@ from backend.redteam.baseline import (
     BaselineRunAborted,
     JsonRecord,
     assert_comparable_baselines,
+    merge_baseline_records,
     run_complete_baseline,
 )
+from backend.redteam.corpus import evaluate_persistent_influence
 from backend.tools.llm_client import LLMClient, LLMResponse
 from scripts import run_redteam_baseline as runner
 
@@ -240,3 +242,69 @@ def test_before_after_comparison_rejects_execution_config_mismatch() -> None:
                 "execution_config_fingerprint": "different",
             },
         )
+
+
+def test_persistent_influence_requires_control_finding_and_poison_retrieval() -> None:
+    target = "sql-injection:backend/events/search.py"
+    assert evaluate_persistent_influence(
+        target,
+        [target],
+        [],
+        poisoned_document_retrieved=True,
+    )
+    assert not evaluate_persistent_influence(
+        target,
+        [],
+        [],
+        poisoned_document_retrieved=True,
+    )
+    assert not evaluate_persistent_influence(
+        target,
+        [target],
+        [],
+        poisoned_document_retrieved=False,
+    )
+    assert not evaluate_persistent_influence(
+        target,
+        [target],
+        [target],
+        poisoned_document_retrieved=True,
+    )
+
+
+def test_baseline_subset_merge_is_atomic_and_recalculates_failures(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.json"
+    path.write_text(
+        json.dumps(
+            {
+                "complete": True,
+                "corpora": {
+                    "attacks": {
+                        "expected": 2,
+                        "attempted": 2,
+                        "completed": 2,
+                        "skipped": 0,
+                        "review_failed": 1,
+                    }
+                },
+                "results": [
+                    {"id": "RT-001", "corpus": "attacks", "outcome": "REVIEW_FAILED"},
+                    {"id": "RT-002", "corpus": "attacks", "outcome": "ISOLATED"},
+                ],
+            }
+        )
+    )
+
+    updated = merge_baseline_records(
+        path,
+        [{"id": "RT-001", "corpus": "attacks", "outcome": "SUCCEEDED"}],
+    )
+
+    assert updated["results"][0]["outcome"] == "SUCCEEDED"
+    assert updated["corpora"]["attacks"]["review_failed"] == 0
+    with pytest.raises(ValueError, match="unknown record"):
+        merge_baseline_records(
+            path,
+            [{"id": "RT-999", "corpus": "attacks", "outcome": "ISOLATED"}],
+        )
+    assert json.loads(path.read_text()) == updated
