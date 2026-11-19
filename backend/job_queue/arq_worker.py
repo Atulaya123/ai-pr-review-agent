@@ -230,6 +230,70 @@ async def _execute_review_job(
                 payload=failure.model_dump(mode="json"),
             )
             log_stage("review.failed", stage=exc.stage, outcome=failure.outcome.value)
+            if installation_id is None:
+                await emit_agent_event(
+                    request.review_id,
+                    "worker",
+                    "review.failure_block_unavailable",
+                    outcome="missing_installation_id",
+                    payload={"stage": exc.stage},
+                )
+                log_stage(
+                    "github.failure_block_unavailable",
+                    stage="posting",
+                    outcome="missing_installation_id",
+                )
+            else:
+                controls = await get_runtime_controls()
+                if controls.posting_disabled:
+                    await emit_agent_event(
+                        request.review_id,
+                        "worker",
+                        "review.failure_block_suppressed",
+                        outcome="posting_disabled",
+                        payload={"stage": exc.stage},
+                    )
+                    log_stage(
+                        "github.failure_block_suppressed",
+                        stage="posting",
+                        outcome="posting_disabled",
+                    )
+                else:
+                    try:
+                        github_review_id = await github.post_review_failure(
+                            repo, pr_number, installation_id
+                        )
+                    except Exception as block_error:
+                        logger.exception(
+                            "failed to submit changes-requested review for failed review %s#%s",
+                            repo,
+                            pr_number,
+                        )
+                        await emit_agent_event(
+                            request.review_id,
+                            "worker",
+                            "review.failure_block_failed",
+                            outcome=type(block_error).__name__,
+                            payload={"stage": exc.stage},
+                        )
+                        log_stage(
+                            "github.failure_block_failed",
+                            stage="posting",
+                            outcome=type(block_error).__name__,
+                        )
+                    else:
+                        await emit_agent_event(
+                            request.review_id,
+                            "worker",
+                            "review.failure_blocked",
+                            outcome="request_changes",
+                            payload={"github_review_id": github_review_id},
+                        )
+                        log_stage(
+                            "github.failure_blocked",
+                            stage="posting",
+                            outcome="request_changes",
+                        )
             raise
         except StageExecutionError as exc:
             log_stage("worker.failed", stage=exc.stage, outcome=exc.cause_type)

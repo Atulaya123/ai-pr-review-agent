@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -107,3 +109,42 @@ def test_escalation_body_lists_findings_as_leads_not_a_verdict():
     assert "app.py:3" in body
     assert "looks off" in body
     assert "not a final verdict" in body
+
+
+@pytest.mark.asyncio
+async def test_failed_review_posts_a_request_changes_review(monkeypatch):
+    client = GitHubClient(Settings())
+    monkeypatch.setattr(client, "_installation_token", AsyncMock(return_value="installation-token"))
+    request: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, int]:
+            return {"id": 987}
+
+    class HttpClient:
+        async def __aenter__(self) -> "HttpClient":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(
+            self, url: str, *, headers: dict[str, str], json: dict[str, object]
+        ) -> Response:
+            request.update({"url": url, "headers": headers, "body": json})
+            return Response()
+
+    monkeypatch.setattr("backend.integrations.github_client.httpx.AsyncClient", HttpClient)
+
+    review_id = await client.post_review_failure("acme/demo", 42, 123)
+
+    assert review_id == "987"
+    assert request["url"] == "https://api.github.com/repos/acme/demo/pulls/42/reviews"
+    body = request["body"]
+    assert isinstance(body, dict)
+    assert body["event"] == "REQUEST_CHANGES"
+    assert body["comments"] == []
+    assert "review failed" in body["body"].lower()

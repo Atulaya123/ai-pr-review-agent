@@ -22,6 +22,12 @@ _EVENT_BY_OUTCOME = {
     # request_human_review() below, not post_review(); kept for completeness only.
 }
 
+_FAILED_REVIEW_BODY = (
+    "🤖 **Automated review failed — changes requested.** "
+    "The review could not produce a valid verdict, so this pull request must not be "
+    "treated as approved. Retry the automated review or obtain a human review before merging."
+)
+
 
 class GitHubClient:
     """GitHub App auth: sign a short-lived JWT with the App's private key, trade
@@ -153,6 +159,29 @@ class GitHubClient:
                         "Accept": "application/vnd.github+json",
                     },
                     json={"body": body, "event": event, "comments": comments},
+                )
+                resp.raise_for_status()
+                return str(resp.json()["id"])
+
+        return await with_timeout(retry_with_backoff(_call))
+
+    async def post_review_failure(self, repo: str, pr_number: int, installation_id: int) -> str:
+        """Request changes when the automated review could not produce a verdict."""
+        token = await self._installation_token(installation_id)
+
+        async def _call():
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                    json={
+                        "body": _FAILED_REVIEW_BODY,
+                        "event": "REQUEST_CHANGES",
+                        "comments": [],
+                    },
                 )
                 resp.raise_for_status()
                 return str(resp.json()["id"])
