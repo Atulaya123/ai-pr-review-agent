@@ -76,7 +76,16 @@ On 19 Nov 2026, `gh api repos/Atulaya123/ai-pr-review-agent/branches/master/prot
 
 After the App permission update, a newly minted installation access token for installation `149363438` reported `checks: write`, `pull_requests: write`, `contents: read`, and `metadata: read`. The current `master` rule strictly requires `checks` from GitHub Actions (App ID 15368) and `AIPR Review Verdict` from `aipr-review-agent-atulya` (App ID 4406351), enforces checks for administrators, and requires no pull-request approvals.
 
-On temporary PR #17, the live reviewer received two conflicting output-shape probes but completed a valid review; the App check was `success`, so this did not demonstrate a real `model.parse` failure. To validate branch enforcement, the App check was then deliberately changed through the Checks API to a clearly labeled synthetic `failure`: GitHub reported `mergeStateStatus=BLOCKED` while both CI checks were successful. After restoring the check to `success` following the valid review, GitHub reported `mergeStateStatus=CLEAN`. This verifies that the required App check blocks and clears the merge state, but the failure transition was synthetic; the production parse-failure-to-check path remains covered by tests, not a live parse failure.
+On 19 Nov 2026, temporary PR #18 used attack RT-028 from the **OBFUSCATED** family, a fixture that had failed in all three Qwen 7B replays. The deployed reviewer used `openai/gpt-oss-120b`; all four specialists completed generation, and the worker recorded `review.complete` with outcome `critical_block`. It did **not** emit `generation.failed` or `review.failed`, and its `AIPR Review Verdict` check completed with `success` (check run `135674403150`); GitHub reported `mergeStateStatus=CLEAN`. The attack therefore did not reproduce a live `model.parse` failure, and the live parse-failure-to-check path remains unverified.
+
+The relevant `agent_events` rows for review `86989b6b-26a8-4871-997c-9852fdee45e3` were:
+
+| Event row | UTC timestamp | Agent | Event | Outcome | Evidence |
+|---|---|---|---|---|---|
+| `73b2a57e-1709-433f-a13a-22d355f39691` | 2026-11-19 15:36:12.760890 | worker | `review.complete` | `critical_block` | Valid review completed |
+| `30273bfd-bbeb-4ccf-ae55-83f168a0012f` | 2026-11-19 15:36:15.125590 | worker | `review.check_completed` | `success` | Check run `135674403150` |
+
+This live corpus run supersedes neither the earlier synthetic branch-enforcement experiment nor the distinction between synthetic and production failures: the synthetic check demonstrated GitHub enforcement, while this PR demonstrated only a valid live review and a successful verdict check.
 
 ### Item 4 order, corrected from the measurements
 
