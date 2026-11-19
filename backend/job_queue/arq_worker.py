@@ -206,7 +206,7 @@ async def _execute_review_job(
     with review_log_context(request):
         log_stage("worker.started", stage="pickup")
         try:
-            return await _execute_review_job_inner(
+            result = await _execute_review_job_inner(
                 request=request,
                 engine=engine,
                 github=github,
@@ -230,70 +230,18 @@ async def _execute_review_job(
                 payload=failure.model_dump(mode="json"),
             )
             log_stage("review.failed", stage=exc.stage, outcome=failure.outcome.value)
-            if installation_id is None:
-                await emit_agent_event(
-                    request.review_id,
-                    "worker",
-                    "review.failure_block_unavailable",
-                    outcome="missing_installation_id",
-                    payload={"stage": exc.stage},
-                )
-                log_stage(
-                    "github.failure_block_unavailable",
-                    stage="posting",
-                    outcome="missing_installation_id",
-                )
-            else:
-                controls = await get_runtime_controls()
-                if controls.posting_disabled:
-                    await emit_agent_event(
-                        request.review_id,
-                        "worker",
-                        "review.failure_block_suppressed",
-                        outcome="posting_disabled",
-                        payload={"stage": exc.stage},
-                    )
-                    log_stage(
-                        "github.failure_block_suppressed",
-                        stage="posting",
-                        outcome="posting_disabled",
-                    )
-                else:
-                    try:
-                        github_review_id = await github.post_review_failure(
-                            repo, pr_number, installation_id
-                        )
-                    except Exception as block_error:
-                        logger.exception(
-                            "failed to submit changes-requested review for failed review %s#%s",
-                            repo,
-                            pr_number,
-                        )
-                        await emit_agent_event(
-                            request.review_id,
-                            "worker",
-                            "review.failure_block_failed",
-                            outcome=type(block_error).__name__,
-                            payload={"stage": exc.stage},
-                        )
-                        log_stage(
-                            "github.failure_block_failed",
-                            stage="posting",
-                            outcome=type(block_error).__name__,
-                        )
-                    else:
-                        await emit_agent_event(
-                            request.review_id,
-                            "worker",
-                            "review.failure_blocked",
-                            outcome="request_changes",
-                            payload={"github_review_id": github_review_id},
-                        )
-                        log_stage(
-                            "github.failure_blocked",
-                            stage="posting",
-                            outcome="request_changes",
-                        )
+            await _set_review_check(
+                request=request,
+                github=github,
+                repo=repo,
+                pr_number=pr_number,
+                installation_id=installation_id,
+                conclusion="failure",
+                summary=(
+                    f"The review failed at `{exc.stage}` and produced no valid verdict. "
+                    "Retry the review before merging."
+                ),
+            )
             raise
         except StageExecutionError as exc:
             log_stage("worker.failed", stage=exc.stage, outcome=exc.cause_type)
@@ -301,6 +249,74 @@ async def _execute_review_job(
         except Exception as exc:
             log_stage("worker.failed", stage="workflow", outcome=type(exc).__name__)
             raise StageExecutionError("workflow", exc) from exc
+        if not await _set_review_check(
+            request=request,
+            github=github,
+            repo=repo,
+            pr_number=pr_number,
+            installation_id=installation_id,
+            conclusion="success",
+            summary="The automated review completed and recorded a valid verdict.",
+        ):
+            raise StageExecutionError(
+                "review_check", RuntimeError("Unable to publish the required review check")
+            )
+        return result
+
+
+async def _set_review_check(
+    *,
+    request: ReviewRequest,
+    github: GitHubClient,
+    repo: str,
+    pr_number: int,
+    installation_id: int | None,
+    conclusion: str,
+    summary: str,
+) -> bool:
+    if installation_id is None:
+        await emit_agent_event(
+            request.review_id,
+            "worker",
+            "review.check_unavailable",
+            outcome="missing_installation_id",
+            payload={"conclusion": conclusion, "head_sha": request.head_sha},
+        )
+        log_stage("review.check_unavailable", stage="check_run", outcome="missing_installation_id")
+        return conclusion == "success"
+    try:
+        check_run_id = await github.set_review_check(
+            repo,
+            pr_number,
+            request.head_sha,
+            installation_id,
+            conclusion=conclusion,
+            summary=summary,
+        )
+    except Exception as check_error:
+        logger.exception("failed to publish review check for %s#%s", repo, pr_number)
+        await emit_agent_event(
+            request.review_id,
+            "worker",
+            "review.check_update_failed",
+            outcome=type(check_error).__name__,
+            payload={"conclusion": conclusion, "head_sha": request.head_sha},
+        )
+        log_stage(
+            "review.check_update_failed",
+            stage="check_run",
+            outcome=type(check_error).__name__,
+        )
+        return False
+    await emit_agent_event(
+        request.review_id,
+        "worker",
+        "review.check_completed",
+        outcome=conclusion,
+        payload={"check_run_id": check_run_id, "head_sha": request.head_sha},
+    )
+    log_stage("review.check_completed", stage="check_run", outcome=conclusion)
+    return True
 
 
 async def _execute_review_job_inner(

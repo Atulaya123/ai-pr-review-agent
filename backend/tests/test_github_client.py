@@ -112,17 +112,35 @@ def test_escalation_body_lists_findings_as_leads_not_a_verdict():
 
 
 @pytest.mark.asyncio
-async def test_failed_review_posts_a_request_changes_review(monkeypatch):
+@pytest.mark.parametrize(
+    ("existing_run", "expected_method", "expected_id", "conclusion", "expected_title"),
+    [
+        (None, "post", "987", "failure", "Review failed to produce a verdict"),
+        (
+            {"id": 654, "external_id": "aipr-review:42:deadbeef"},
+            "patch",
+            "654",
+            "success",
+            "Review completed",
+        ),
+    ],
+)
+async def test_review_check_is_created_or_updated_for_the_same_head_sha(
+    monkeypatch, existing_run, expected_method, expected_id, conclusion, expected_title
+):
     client = GitHubClient(Settings())
     monkeypatch.setattr(client, "_installation_token", AsyncMock(return_value="installation-token"))
-    request: dict[str, object] = {}
+    requests: list[tuple[str, str, dict[str, object] | None]] = []
 
     class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict[str, int]:
-            return {"id": 987}
+        def json(self):
+            return self.payload
 
     class HttpClient:
         async def __aenter__(self) -> "HttpClient":
@@ -131,20 +149,39 @@ async def test_failed_review_posts_a_request_changes_review(monkeypatch):
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-        async def post(
-            self, url: str, *, headers: dict[str, str], json: dict[str, object]
-        ) -> Response:
-            request.update({"url": url, "headers": headers, "body": json})
-            return Response()
+        async def get(self, url, *, params, headers):
+            requests.append(("get", url, None))
+            return Response({"check_runs": [existing_run] if existing_run else []})
+
+        async def post(self, url, *, headers, json):
+            requests.append(("post", url, json))
+            return Response({"id": 987})
+
+        async def patch(self, url, *, headers, json):
+            requests.append(("patch", url, json))
+            return Response({"id": 654})
 
     monkeypatch.setattr("backend.integrations.github_client.httpx.AsyncClient", HttpClient)
 
-    review_id = await client.post_review_failure("acme/demo", 42, 123)
+    check_id = await client.set_review_check(
+        "acme/demo",
+        42,
+        "deadbeef",
+        123,
+        conclusion=conclusion,
+        summary="The review could not produce a valid verdict.",
+    )
 
-    assert review_id == "987"
-    assert request["url"] == "https://api.github.com/repos/acme/demo/pulls/42/reviews"
-    body = request["body"]
-    assert isinstance(body, dict)
-    assert body["event"] == "REQUEST_CHANGES"
-    assert body["comments"] == []
-    assert "review failed" in body["body"].lower()
+    assert check_id == expected_id
+    assert requests[0][0] == "get"
+    method, url, body = requests[1]
+    assert method == expected_method
+    expected_endpoint = "check-runs" if expected_method == "post" else "check-runs/654"
+    assert url == f"https://api.github.com/repos/acme/demo/{expected_endpoint}"
+    assert body is not None
+    assert body["name"] == "AIPR Review Verdict"
+    assert body["head_sha"] == "deadbeef"
+    assert body["external_id"] == "aipr-review:42:deadbeef"
+    assert body["status"] == "completed"
+    assert body["conclusion"] == conclusion
+    assert body["output"]["title"] == expected_title

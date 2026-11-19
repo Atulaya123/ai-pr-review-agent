@@ -13,6 +13,7 @@ from backend.reliability.retry import retry_with_backoff
 from backend.reliability.timeout import with_timeout
 
 GITHUB_API = "https://api.github.com"
+REVIEW_CHECK_NAME = "AIPR Review Verdict"
 
 _EVENT_BY_OUTCOME = {
     ReviewOutcome.APPROVED: "COMMENT",
@@ -21,12 +22,6 @@ _EVENT_BY_OUTCOME = {
     ReviewOutcome.ESCALATED: "COMMENT",  # never actually used — ESCALATED goes through
     # request_human_review() below, not post_review(); kept for completeness only.
 }
-
-_FAILED_REVIEW_BODY = (
-    "🤖 **Automated review failed — changes requested.** "
-    "The review could not produce a valid verdict, so this pull request must not be "
-    "treated as approved. Retry the automated review or obtain a human review before merging."
-)
 
 
 class GitHubClient:
@@ -165,26 +160,73 @@ class GitHubClient:
 
         return await with_timeout(retry_with_backoff(_call))
 
-    async def post_review_failure(self, repo: str, pr_number: int, installation_id: int) -> str:
-        """Request changes when the automated review could not produce a verdict."""
+    async def set_review_check(
+        self,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        installation_id: int,
+        *,
+        conclusion: str,
+        summary: str,
+    ) -> str:
+        """Create or update the required verdict check for this PR head."""
+        if conclusion not in ("success", "failure"):
+            raise ValueError(f"Unsupported review check conclusion: {conclusion}")
         token = await self._installation_token(installation_id)
+        external_id = f"aipr-review:{pr_number}:{head_sha}"
 
         async def _call():
             async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
-                    headers={
-                        "Authorization": f"token {token}",
-                        "Accept": "application/vnd.github+json",
-                    },
-                    json={
-                        "body": _FAILED_REVIEW_BODY,
-                        "event": "REQUEST_CHANGES",
-                        "comments": [],
-                    },
+                headers = {
+                    "Authorization": f"token {token}",
+                    "Accept": "application/vnd.github+json",
+                }
+                list_response = await client.get(
+                    f"{GITHUB_API}/repos/{repo}/commits/{head_sha}/check-runs",
+                    params={"check_name": REVIEW_CHECK_NAME, "per_page": 100},
+                    headers=headers,
                 )
-                resp.raise_for_status()
-                return str(resp.json()["id"])
+                list_response.raise_for_status()
+                check_runs = list_response.json().get("check_runs", [])
+                existing = next(
+                    (
+                        check
+                        for check in check_runs
+                        if check.get("external_id") == external_id
+                        and isinstance(check.get("id"), int)
+                    ),
+                    None,
+                )
+                payload = {
+                    "name": REVIEW_CHECK_NAME,
+                    "head_sha": head_sha,
+                    "external_id": external_id,
+                    "status": "completed",
+                    "conclusion": conclusion,
+                    "output": {
+                        "title": (
+                            "Review completed"
+                            if conclusion == "success"
+                            else "Review failed to produce a verdict"
+                        ),
+                        "summary": summary,
+                    },
+                }
+                if existing is None:
+                    response = await client.post(
+                        f"{GITHUB_API}/repos/{repo}/check-runs",
+                        headers=headers,
+                        json=payload,
+                    )
+                else:
+                    response = await client.patch(
+                        f"{GITHUB_API}/repos/{repo}/check-runs/{existing['id']}",
+                        headers=headers,
+                        json=payload,
+                    )
+                response.raise_for_status()
+                return str(response.json()["id"])
 
         return await with_timeout(retry_with_backoff(_call))
 

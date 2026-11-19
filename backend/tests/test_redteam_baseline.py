@@ -300,8 +300,12 @@ def test_baseline_subset_merge_is_atomic_and_recalculates_failures(tmp_path: Pat
         [{"id": "RT-001", "corpus": "attacks", "outcome": "SUCCEEDED"}],
     )
 
-    assert updated["results"][0]["outcome"] == "SUCCEEDED"
-    assert updated["corpora"]["attacks"]["review_failed"] == 0
+    results = updated["results"]
+    corpora = updated["corpora"]
+    assert isinstance(results, list) and isinstance(results[0], dict)
+    assert isinstance(corpora, dict) and isinstance(corpora["attacks"], dict)
+    assert results[0]["outcome"] == "SUCCEEDED"
+    assert corpora["attacks"]["review_failed"] == 0
     with pytest.raises(ValueError, match="unknown record"):
         merge_baseline_records(
             path,

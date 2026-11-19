@@ -66,7 +66,7 @@ async def _run(
 
 
 @pytest.mark.parametrize("posting_disabled", [False, True])
-async def test_malformed_generation_requests_changes_and_never_records_a_clean_review(
+async def test_malformed_generation_fails_required_check_and_never_records_clean_review(
     db_session: AsyncSession,
     _clear_test_checkpoints: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -74,7 +74,7 @@ async def test_malformed_generation_requests_changes_and_never_records_a_clean_r
 ) -> None:
     request = _request(81)
     github = AsyncMock()
-    github.post_review_failure.return_value = "github-review-81"
+    github.set_review_check.return_value = "check-run-81"
     llm = AsyncMock(spec=LLMClient)
     llm.complete_json.return_value = LLMResponse(
         text="malformed secret response",
@@ -95,10 +95,14 @@ async def test_malformed_generation_requests_changes_and_never_records_a_clean_r
     with pytest.raises(ModelResponseParseError) as error:
         await _run(request, github)
     assert error.value.stage == "model.parse"
-    if posting_disabled:
-        github.post_review_failure.assert_not_called()
-    else:
-        github.post_review_failure.assert_awaited_once_with(request.repo, request.pr_number, 123)
+    github.set_review_check.assert_awaited_once_with(
+        request.repo,
+        request.pr_number,
+        request.head_sha,
+        123,
+        conclusion="failure",
+        summary="The review failed at `model.parse` and produced no valid verdict. Retry the review before merging.",
+    )
     github.post_review.assert_not_called()
     github.request_human_review.assert_not_called()
     assert await db_session.get(PRReviewRecord, request.review_id) is None
@@ -117,14 +121,8 @@ async def test_malformed_generation_requests_changes_and_never_records_a_clean_r
     failure = ReviewFailure.model_validate(failed.payload)
     assert failure.stage == "model.parse" and failure.attempt_id == request.attempt_id
     assert any(event.event_type == "generation.failed" for event in events)
-    if posting_disabled:
-        suppressed = next(
-            event for event in events if event.event_type == "review.failure_block_suppressed"
-        )
-        assert suppressed.outcome == "posting_disabled"
-    else:
-        blocked = next(event for event in events if event.event_type == "review.failure_blocked")
-        assert blocked.outcome == "request_changes"
+    check = next(event for event in events if event.event_type == "review.check_completed")
+    assert check.outcome == "failure"
     assert not any(event.event_type in ("review.complete", "hitl.gate") for event in events)
     assert "malformed secret response" not in json.dumps(failed.payload)
     with pytest.raises(ValidationError):
@@ -143,6 +141,7 @@ async def test_valid_clean_generation_still_records_and_posts_a_distinct_clean_v
 ) -> None:
     request = _request(82)
     github = AsyncMock()
+    github.set_review_check.return_value = "check-run-82"
     llm = AsyncMock(spec=LLMClient)
     llm.complete_json.return_value = LLMResponse(
         text='{"findings":[]}',
@@ -160,6 +159,14 @@ async def test_valid_clean_generation_still_records_and_posts_a_distinct_clean_v
     assert record.findings == [] and record.posted
     github.post_review.assert_awaited_once()
     github.request_human_review.assert_not_called()
+    github.set_review_check.assert_awaited_once_with(
+        request.repo,
+        request.pr_number,
+        request.head_sha,
+        123,
+        conclusion="success",
+        summary="The automated review completed and recorded a valid verdict.",
+    )
     events = (
         (
             await db_session.execute(
@@ -183,7 +190,6 @@ async def test_wrong_shape_json_fails_explicitly_and_never_posts_or_records(
 ) -> None:
     request = _request(84).model_copy(update={"installation_id": None})
     github = AsyncMock()
-    github.post_review_failure.return_value = "github-review-84"
     llm = AsyncMock(spec=LLMClient)
     llm.complete_json.return_value = LLMResponse(
         text='{"findings":[{"severity":"HIGH"}]}',
@@ -204,7 +210,7 @@ async def test_wrong_shape_json_fails_explicitly_and_never_posts_or_records(
         await _run(request, github, engine=_GraphWithoutCheckpoint())
 
     assert error.value.stage == "model.parse"
-    github.post_review_failure.assert_not_called()
+    github.set_review_check.assert_not_called()
     github.post_review.assert_not_called()
     github.request_human_review.assert_not_called()
     assert await db_session.get(PRReviewRecord, request.review_id) is None
@@ -224,9 +230,7 @@ async def test_wrong_shape_json_fails_explicitly_and_never_posts_or_records(
     assert failure.stage == "model.parse"
     assert failure.cause_type == "KeyError"
     assert any(event.event_type == "generation.failed" for event in events)
-    unavailable = next(
-        event for event in events if event.event_type == "review.failure_block_unavailable"
-    )
+    unavailable = next(event for event in events if event.event_type == "review.check_unavailable")
     assert unavailable.outcome == "missing_installation_id"
     assert not any(event.event_type in ("review.complete", "hitl.gate") for event in events)
 
