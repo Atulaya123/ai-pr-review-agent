@@ -256,7 +256,10 @@ async def _execute_review_job(
             pr_number=pr_number,
             installation_id=installation_id,
             conclusion="success",
-            summary="The automated review completed and recorded a valid verdict.",
+            summary=(
+                "The review completed with a valid parsed response. This check signals "
+                "completion, not finding severity or review outcome."
+            ),
         ):
             raise StageExecutionError(
                 "review_check", RuntimeError("Unable to publish the required review check")

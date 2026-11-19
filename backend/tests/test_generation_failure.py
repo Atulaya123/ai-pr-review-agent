@@ -165,7 +165,10 @@ async def test_valid_clean_generation_still_records_and_posts_a_distinct_clean_v
         request.head_sha,
         123,
         conclusion="success",
-        summary="The automated review completed and recorded a valid verdict.",
+        summary=(
+            "The review completed with a valid parsed response. This check signals "
+            "completion, not finding severity or review outcome."
+        ),
     )
     events = (
         (

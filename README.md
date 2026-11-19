@@ -184,10 +184,18 @@ Embedding adapters currently expose vectors but no usage, so their cost is recor
 unknown. Local tests exercise the actual RAGAS algorithms with scripted judges and
 synthetic embeddings; no live RAGAS quality scores have been verified.
 
-The offline replay suite runs in GitHub Actions on pushes and pull requests:
-`mypy backend`, `black --check backend scripts`, and
-`pytest -q backend/evaluation`. Replays use recorded model outputs and fail if
-the current prompt hash differs from the fixture.
+GitHub Actions runs `mypy backend`, `black --check backend scripts`, and the full test
+suite (`pytest -q --junitxml=...`) on pushes and pull requests. A separate notification
+job creates a GitHub issue assigned to the repository owner after a failing run on a push
+or same-repository pull request; it runs on a fresh runner and does not check out or execute
+the PR code. Fork pull requests are excluded because their GitHub token cannot create
+issues.
+
+The required `AIPR Review Verdict` check name is historical: **success means the review
+completed with a valid parsed response, not that the review found no issues or had a
+non-blocking outcome**. It is green for outcomes such as `critical_block`; a model-parse
+failure makes it fail. Read the posted review for findings and severity—the check is a
+completion gate, not a findings/verdict signal.
 
 To compare a candidate specialist prompt with the current prompt on the same recorded fixture
 inputs, install `backend/requirements-dev.txt`, configure the active provider and its required

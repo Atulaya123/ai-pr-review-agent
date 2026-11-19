@@ -107,3 +107,7 @@ The 37 hard negatives were distributed across the seven requested categories: se
 ## What this baseline does and does not prove
 
 This measures the existing controls against these fixtures on one local Qwen 7B configuration. It does not test the deployed service, does not establish that the model is robust to injection, and does not prove that attacks outside this corpus would fail.
+
+### Closing position
+
+The live `model.parse` failure path is covered by unit tests and a synthetic check-failure demonstration that verified GitHub blocks and clears the merge state. No naturally occurring parse failure has been observed on the production model: the inputs that break the local baseline model do not break it.
