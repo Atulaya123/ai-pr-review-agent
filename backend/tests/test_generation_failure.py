@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -8,19 +9,33 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.base_agent import SpecialistAgent
+from backend.configuration.runtime_controls import RuntimeControls
 from backend.core.exceptions import ModelResponseParseError
-from backend.core.workflow_engine import get_workflow_engine
+from backend.core.workflow_engine import WorkflowEngine, get_workflow_engine
 from backend.database.models import AgentEvent, PRReviewRecord
 from backend.job_queue.arq_worker import run_review_job
 from backend.models.enums import AgentType, ReviewOutcome
 from backend.models.review import ReviewFailure, ReviewRequest, ReviewResult
 from backend.orchestrator import nodes
+from backend.orchestrator.graph import build_review_graph
 from backend.tests.fixtures.vulnerable_diff import CLEAN_DIFF_FILES
 from backend.tools.llm_client import LLMClient, LLMResponse, MockLLMClient
 
 
 async def _empty_context(request: ReviewRequest) -> str:
     return ""
+
+
+class _GraphWithoutCheckpoint(WorkflowEngine):
+    async def run(self, workflow_id: str, input: dict[str, Any]) -> dict[str, Any]:
+        graph = build_review_graph().compile()
+        return await graph.ainvoke(input, config={"configurable": {"thread_id": workflow_id}})
+
+    async def resume(self, workflow_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        return await self.run(workflow_id, state)
+
+    async def get_state(self, workflow_id: str) -> dict[str, Any] | None:
+        return None
 
 
 def _request(pr_number: int) -> ReviewRequest:
@@ -33,9 +48,11 @@ def _request(pr_number: int) -> ReviewRequest:
     )
 
 
-async def _run(request: ReviewRequest, github: AsyncMock) -> str:
+async def _run(
+    request: ReviewRequest, github: AsyncMock, engine: WorkflowEngine | None = None
+) -> str:
     return await run_review_job(
-        {"github_client": github, "workflow_engine": get_workflow_engine()},
+        {"github_client": github, "workflow_engine": engine or get_workflow_engine()},
         repo=request.repo,
         pr_number=request.pr_number,
         installation_id=request.installation_id,
@@ -136,6 +153,54 @@ async def test_valid_clean_generation_still_records_and_posts_a_distinct_clean_v
         event.event_type == "generation.complete" and event.outcome == "clean" for event in events
     )
     assert not any(event.event_type.endswith(".failed") for event in events)
+
+
+async def test_wrong_shape_json_fails_explicitly_and_never_posts_or_records(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request(84)
+    github = AsyncMock()
+    llm = AsyncMock(spec=LLMClient)
+    llm.complete_json.return_value = LLMResponse(
+        text='{"findings":[{"severity":"HIGH"}]}',
+        model="mock",
+        tokens_in=None,
+        tokens_out=None,
+        cost_usd=None,
+    )
+
+    async def default_controls() -> RuntimeControls:
+        return RuntimeControls()
+
+    monkeypatch.setattr(nodes, "get_llm_client", lambda: llm)
+    monkeypatch.setattr(nodes, "get_retrieved_context", _empty_context)
+    monkeypatch.setattr(nodes, "get_runtime_controls", default_controls)
+
+    with pytest.raises(ModelResponseParseError) as error:
+        await _run(request, github, engine=_GraphWithoutCheckpoint())
+
+    assert error.value.stage == "model.parse"
+    github.post_review.assert_not_called()
+    github.request_human_review.assert_not_called()
+    assert await db_session.get(PRReviewRecord, request.review_id) is None
+    events = (
+        (
+            await db_session.execute(
+                select(AgentEvent).where(AgentEvent.review_id == request.review_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    failed = next(event for event in events if event.event_type == "review.failed")
+    assert failed.outcome == ReviewOutcome.FAILED.value
+    assert failed.payload is not None
+    failure = ReviewFailure.model_validate(failed.payload)
+    assert failure.stage == "model.parse"
+    assert failure.cause_type == "KeyError"
+    assert any(event.event_type == "generation.failed" for event in events)
+    assert not any(event.event_type in ("review.complete", "hitl.gate") for event in events)
 
 
 def test_invalid_envelopes_and_findings_never_become_empty_or_partial_success() -> None:

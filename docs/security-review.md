@@ -77,6 +77,11 @@ use or an actual credential leak. Hosted processing may be intentional and autho
 the unresolved question is what data may leave, with whose consent, and under which
 provider/tracing retention controls.
 
+**PROCESS observation (18 Nov):** A red-team harness run executed with
+`AIPR_LANGSMITH_TRACING` enabled and sent prompts to a hosted third party unintentionally.
+The content was already public, so there was no data exposure, and a tested guard now
+disables tracing for harness runs.
+
 ## LLM01: Prompt Injection
 
 **Applies: yes. Addressed: partial. Unaddressed: yes.**
